@@ -40,3 +40,7 @@ a name in the zip are refused.
 
 Not yet: manifest validation, icons, `server.mcp_config.env`,
 `compatibility.platform_overrides`, prompts, localization, and signing (`mcpb sign`/`verify`).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

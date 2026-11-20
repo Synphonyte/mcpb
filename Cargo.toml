@@ -1,6 +1,7 @@
 [package]
 description = "Pack a local MCP server as an MCPB bundle (.mcpb)"
 edition = "2024"
+license = "MIT"
 name = "mcpb"
 version = "0.1.0"
 
