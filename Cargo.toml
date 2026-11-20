@@ -1,8 +1,12 @@
 [package]
+categories = ["development-tools", "compression"]
 description = "Pack a local MCP server as an MCPB bundle (.mcpb)"
 edition = "2024"
+keywords = ["mcp", "mcpb", "bundle", "claude", "packaging"]
 license = "MIT"
 name = "mcpb"
+readme = "README.md"
+repository = "https://github.com/Synphonyte/mcpb"
 version = "0.1.0"
 
 [dependencies]

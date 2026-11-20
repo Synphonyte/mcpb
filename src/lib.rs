@@ -5,6 +5,10 @@
 //! A bundle holds the binary of **one** platform: the manifest can switch the
 //! command per operating system but not per CPU architecture, so each
 //! OS/architecture is its own bundle.
+//!
+//! Not everything the manifest spec offers is written yet: `server.mcp_config.env`,
+//! `platform_overrides`, icons, prompts and localization are missing, as are manifest
+//! validation and signing. `TODO.md` in the repository lists them.
 
 use std::collections::HashSet;
 use std::fs;
@@ -108,6 +112,9 @@ impl BundleSpec {
     pub fn manifest(&self) -> Value {
         let entry_point = self.entry_point();
 
+        // TODO: `long_description`, `repository`, `icons`, `keywords`, `license`,
+        // `localization`, `_meta` and `prompts` are not written yet, nor is
+        // `mcp_config.env` / `platform_overrides`. See `TODO.md`.
         let mut args: Vec<Value> = self.args.iter().map(|arg| json!(arg)).collect();
         if self.directory.is_some() {
             args.push(json!("${user_config.project_dir}"));
@@ -136,6 +143,9 @@ impl BundleSpec {
             "compatibility": { "platforms": [self.platform.as_str()] },
         });
 
+        // TODO: only a directory prompt exists. The spec also has `string` (with
+        // `sensitive`), `number`, `boolean` and `file` entries, each with `multiple` and
+        // `default`. See `TODO.md`.
         if let Some(directory) = &self.directory {
             manifest["user_config"] = json!({
                 "project_dir": {
@@ -167,6 +177,8 @@ impl BundleSpec {
     /// The bundle is written under a temporary name and moved into place, so
     /// a failed pack leaves no partial bundle behind.
     pub fn pack(&self, path: &Path) -> Result<(), String> {
+        // TODO: validate the manifest first, so a `version` that is not semver or an
+        // `entry_point` with no file behind it is refused instead of packed. See `TODO.md`.
         let files = self.files()?;
         let manifest =
             serde_json::to_vec_pretty(&self.manifest()).expect("a JSON value serializes");
@@ -214,6 +226,8 @@ impl BundleSpec {
     /// with. Refuses two files with the same name, which would silently
     /// overwrite one another in the zip.
     fn files(&self) -> Result<Vec<(String, &Path, u32)>, String> {
+        // TODO: single files under `server/` only. Icons, assets and nested paths need a
+        // directory walk with `.mcpbignore` exclusions. See `TODO.md`.
         let mut files = vec![(self.entry_point(), self.executable.as_path(), 0o755u32)];
 
         for (paths, mode) in [

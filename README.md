@@ -4,6 +4,10 @@ Pack a local MCP server as an [MCP Bundle](https://github.com/modelcontextprotoc
 zip with a `manifest.json` and the server binary, which clients such as Claude Desktop install with
 one click. No Node and no `mcpb` CLI.
 
+```sh
+cargo add mcpb
+```
+
 ```rust
 use mcpb::{BundleSpec, DirectoryPrompt, Platform};
 
@@ -34,12 +38,17 @@ system but not per CPU architecture, so each OS/architecture is its own bundle.
 
 ## Status
 
+Published as [`mcpb`](https://crates.io/crates/mcpb) 0.1.0, which reserves the name; the API is
+not stable yet.
+
 Writes the `manifest.json` (version 0.3) and the archive: executables with mode 755, resources with
 644, under a temporary name so a failed pack leaves no partial bundle, and two files that would share
 a name in the zip are refused.
 
 Not yet: manifest validation, icons, `server.mcp_config.env`,
 `compatibility.platform_overrides`, prompts, localization, and signing (`mcpb sign`/`verify`).
+[TODO.md](TODO.md) is the full list, both of what the spec has and what the crate still needs to be
+useful on its own.
 
 ## License
 
