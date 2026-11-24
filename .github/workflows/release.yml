@@ -1,0 +1,132 @@
+name: Release
+
+# Publishes the crate to crates.io when a version tag is pushed, and publishes a
+# GitHub release whose notes are the changelog's section for that version:
+#
+#     git tag -a v0.2.0 -m v0.2.0
+#     git push origin v0.2.0
+#
+# The tag has to name the crate's version and CHANGELOG.md has to have a dated
+# `## <version> - YYYY-MM-DD` entry for it, so replace `unreleased` there first.
+#
+# A re-run (workflow_dispatch, or "Re-run jobs") skips publishing a version that
+# is already on crates.io and still creates the GitHub release, so a release that
+# only failed in its last step can be finished.
+#
+# One-time setup on crates.io (the crate already exists, so no token is needed):
+# Settings → Trusted Publishing → add a GitHub publisher for
+# owner `Synphonyte`, repository `mcpb`, workflow `release.yml`.
+# The workflow exchanges a short-lived GitHub OIDC token for a crates.io token
+# instead of storing one in the repository's secrets.
+
+on:
+  push:
+    tags: ["v*"]
+  # For a retry against an existing tag:
+  #   gh workflow run release.yml --ref v0.2.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # mints the crates.io token, nothing else
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never interrupt a publish
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # A tag that does not name the crate's version, or a changelog without a
+      # dated entry for it, is a mistake made before tagging: refuse to publish
+      # it rather than ship the wrong version or ship "unreleased" notes.
+      - name: Check the tag, the version and the changelog agree
+        id: version
+        run: |
+          name="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')"
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not name this crate's version v$version"
+            exit 1
+          fi
+          if ! grep -Eq "^## ${version} - [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no dated entry for $version"
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - run: cargo test
+
+      # crates.io refuses a version it already has, which would fail this job and
+      # keep the release job from running. So look first, and let a re-run finish
+      # a release whose publishing already succeeded.
+      - name: Look whether the version is already on crates.io
+        id: published
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          version="${{ steps.version.outputs.version }}"
+          url="https://crates.io/api/v1/crates/$name/$version"
+          status="$(curl -s -o /dev/null -w '%{http_code}' -A "mcpb-release-workflow (https://github.com/Synphonyte/mcpb)" "$url" || true)"
+
+          case "$status" in
+            200)
+              echo "::notice::$name $version is already on crates.io, not publishing it again"
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::could not ask crates.io about $name $version (HTTP $status)"
+              exit 1
+              ;;
+          esac
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: steps.published.outputs.published == 'false'
+
+      - run: cargo publish
+        if: steps.published.outputs.published == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  # Runs only once the crate is really on crates.io, so a release page never
+  # claims a version that failed to publish. The notes come from the changelog.
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the release
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Take the release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## $version - " '
+            index($0, heading) == 1 { inside = 1; next }
+            inside && /^## / { exit }
+            inside { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no notes for $version"
+            exit 1
+          fi
+          cat notes.md
+
+      # The action creates the release for the tag, and updates the existing one
+      # on a retry instead of failing.
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: mcpb ${{ github.ref_name }}
+          body_path: notes.md
