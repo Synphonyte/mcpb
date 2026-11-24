@@ -65,11 +65,12 @@ last two are about the crate and its release.
   today. A crypto stack is a heavy dependency for a crate that currently only writes files, so put
   it behind a feature. Decided against for 0.2.0: clients only treat a CA-issued certificate as
   signed, so a self-signed trailer buys little until someone needs a signed release.
-- [ ] Stream the executable into the zip instead of `fs::read`ing it whole, and pack to any
-  `Write + Seek` rather than only to a path.
-- [ ] Pin reproducibility with a test. Entries are already written in a fixed order and the
-  timestamps come out fixed, but the latter is `zip`'s default with our feature set, not a
-  decision of ours; packing the same input twice should be proven to give the same bytes.
+- [x] Stream the executable into the zip instead of `fs::read`ing it whole, and pack to any
+  `Write + Seek` rather than only to a path: `BundleSpec::pack_to` takes one, and `pack` is the file
+  and rename around it.
+- [x] Pin reproducibility with a test. The entries are written in a fixed order with a fixed
+  timestamp (`pack_to` sets it rather than leaving it to `zip`'s default), and a test packs the same
+  spec twice and compares the bytes, and the file with the in-memory bundle.
 
 ## Making it usable from other projects
 

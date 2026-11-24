@@ -26,6 +26,8 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::user_config` (`UserConfig`: `key`, `kind`, `title`, `description`, `required`,
   `sensitive`, `multiple`, `default`, `min`, `max`), with a constructor per `UserConfigKind`
   (`string`, `number`, `boolean`, `directory`, `file`), written as the manifest's `user_config`.
+- `BundleSpec::pack_to` writes the bundle to any `Write + Seek`, such as a `Cursor` over a `Vec`,
+  and hands it back; `pack` writes it to a path through the same code.
 - `Default for BundleSpec`, so a spec spells only the fields it sets.
 - `BundleSpec::env`, written as `server.mcp_config.env`.
 - `BundleSpec::platform_overrides`, written as
@@ -57,6 +59,8 @@ All notable changes to this crate are documented here. It follows
   not look like one, an empty `long_description` or `license`, repeated
   keywords, a `_meta` namespace that holds no object, and a `user_config` entry
   whose key, default, or `min` and `max` do not fit its type.
+- The same spec now packs to the same bytes every time: the entries are written in a fixed order
+  with a fixed timestamp, and the executable is streamed into the zip instead of read whole.
 - `pack` refuses a spec that `validate` rejects, and an icon that is not a PNG,
   before it writes anything.
 - A bundle file may no longer be named `manifest.json`, which used to clobber

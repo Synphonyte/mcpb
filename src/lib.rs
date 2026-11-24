@@ -6,7 +6,7 @@ mod validate;
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
@@ -644,15 +644,37 @@ impl BundleSpec {
     }
 
     /// Writes the bundle to `path`: `manifest.json`, the server with the
-    /// helpers and resources it uses under `server/`, and the icons and
-    /// translations the manifest points at. Executables are written with mode
-    /// 755, everything else with 644.
+    /// helpers and resources it uses under `server/`, and the icons, screenshots
+    /// and translations the manifest points at. Executables are written with
+    /// mode 755, everything else with 644.
     ///
     /// A spec that [`Self::validate`] does not accept, and an icon that is not
-    /// a PNG, are refused before anything is written. The bundle is written
-    /// under a temporary name and moved into place, so a failed pack leaves no
-    /// partial bundle behind.
+    /// a PNG, are refused. The bundle is written under a temporary name and
+    /// moved into place, so a failed pack leaves no partial bundle behind.
     pub fn pack(&self, path: &Path) -> Result<(), String> {
+        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+        let file =
+            fs::File::create(&temp).map_err(|error| format!("Can't create {temp:?}: {error}"))?;
+
+        if let Err(error) = self.pack_to(file) {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+
+        if let Err(error) = fs::rename(&temp, path) {
+            let _ = fs::remove_file(&temp);
+            return Err(format!("Can't write {path:?}: {error}"));
+        }
+
+        Ok(())
+    }
+
+    /// Writes the bundle to anything that can be written and seeked, such as a
+    /// `Cursor` over a `Vec` in memory, and hands it back.
+    ///
+    /// The same spec packs to the same bytes every time: the entries are written
+    /// in a fixed order, with a fixed timestamp and no dependence on the host.
+    pub fn pack_to<W: Write + Seek>(&self, writer: W) -> Result<W, String> {
         if let Err(problems) = self.validate() {
             let problems = problems
                 .iter()
@@ -668,43 +690,28 @@ impl BundleSpec {
         let manifest =
             serde_json::to_vec_pretty(&self.manifest()).expect("a JSON value serializes");
 
-        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-        let file =
-            fs::File::create(&temp).map_err(|error| format!("Can't create {temp:?}: {error}"))?;
-        let mut zip = zip::ZipWriter::new(file);
+        let mut zip = zip::ZipWriter::new(writer);
 
         let entry = |error: zip::result::ZipError| format!("Can't write the bundle: {error}");
         let plain = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+            .compression_method(zip::CompressionMethod::Deflated)
+            // A timestamp of its own would make the same spec pack to different
+            // bytes on every run.
+            .last_modified_time(zip::DateTime::default());
 
-        let written = (move || -> Result<(), String> {
-            zip.start_file("manifest.json", plain).map_err(entry)?;
-            zip.write_all(&manifest)
-                .map_err(|error| error.to_string())?;
+        zip.start_file("manifest.json", plain).map_err(entry)?;
+        zip.write_all(&manifest)
+            .map_err(|error| error.to_string())?;
 
-            for (name, file, mode) in files {
-                let bytes =
-                    fs::read(file).map_err(|error| format!("Can't read {file:?}: {error}"))?;
-                zip.start_file(name, plain.unix_permissions(mode))
-                    .map_err(entry)?;
-                zip.write_all(&bytes).map_err(|error| error.to_string())?;
-            }
-
-            zip.finish().map_err(entry)?;
-            Ok(())
-        })();
-
-        if let Err(error) = written {
-            let _ = fs::remove_file(&temp);
-            return Err(error);
+        for (name, file, mode) in files {
+            let mut source =
+                fs::File::open(file).map_err(|error| format!("Can't read {file:?}: {error}"))?;
+            zip.start_file(name, plain.unix_permissions(mode))
+                .map_err(entry)?;
+            std::io::copy(&mut source, &mut zip).map_err(|error| error.to_string())?;
         }
 
-        if let Err(error) = fs::rename(&temp, path) {
-            let _ = fs::remove_file(&temp);
-            return Err(format!("Can't write {path:?}: {error}"));
-        }
-
-        Ok(())
+        zip.finish().map_err(entry)
     }
 
     /// Refuses an icon that clients would not show: they only take PNG files.
@@ -935,6 +942,32 @@ mod tests {
             .unwrap();
         let manifest: Value = serde_json::from_str(&manifest).unwrap();
         assert_eq!(manifest["compatibility"]["platforms"], json!(["darwin"]));
+    }
+
+    #[test]
+    fn packing_the_same_spec_gives_the_same_bytes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let notice = dir.path().join("THIRD-PARTY-NOTICES.md");
+        fs::write(&notice, b"notices").unwrap();
+
+        let mut spec = spec(Platform::Linux, binary);
+        spec.resources.push(notice);
+        spec.icon = Some(png(dir.path(), "icon.png"));
+
+        let in_memory = |spec: &BundleSpec| {
+            let mut writer = std::io::Cursor::new(Vec::new());
+            writer = spec.pack_to(writer).unwrap();
+            writer.into_inner()
+        };
+        let first = in_memory(&spec);
+        assert_eq!(first, in_memory(&spec));
+
+        // Packing to a path writes the same bundle, entry by entry.
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+        assert_eq!(fs::read(&bundle).unwrap(), first);
     }
 
     #[test]

@@ -97,8 +97,11 @@ read only that field show. `platform_overrides` describes what the bundle's own 
 instead; a bundle names one platform, so an override for another one is refused.
 
 `pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
-partial bundle behind. It refuses two different files that would share a name in the zip; the same
-file used twice, as the plain icon and as an icon variant, is written once.
+partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a
+`Cursor` over a `Vec` in memory. Both write the entries in a fixed order with a fixed timestamp, so
+the same spec packs to the same bytes every time. It refuses two different files that would share a
+name in the zip; the same file used twice, as the plain icon and as an icon variant, is written
+once.
 
 ## Checks
 
