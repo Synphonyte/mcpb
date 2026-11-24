@@ -1,5 +1,7 @@
 # mcpb
 
+[![CI](https://github.com/Synphonyte/mcpb/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Synphonyte/mcpb/actions/workflows/ci.yml)
+
 Pack a local MCP server as an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb) (`.mcpb`): a
 zip with a `manifest.json` and the server binary, which clients such as Claude Desktop install with
 one click. No Node and no `mcpb` CLI.
