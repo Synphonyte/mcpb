@@ -64,3 +64,48 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
+
+  # The question every user of this crate has is whether it works for their
+  # server on their platform, so this packs a real bundle on each platform and
+  # has the protocol's own CLI validate the manifest in it.
+  bundles:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Pack a bundle of the example binary
+        shell: bash
+        run: cargo run --example pack
+
+      # macOS builds both Apple architectures without another toolchain, so the
+      # cross-target path - a binary that is not this host's - is covered too.
+      - name: Pack a bundle for the other macOS architecture
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ "$(uname -m)" = arm64 ]; then
+            target=x86_64-apple-darwin
+            arch=x64
+          else
+            target=aarch64-apple-darwin
+            arch=arm64
+          fi
+          rustup target add "$target"
+          cargo build --quiet --example pack --target "$target"
+          cargo run --quiet --example pack -- --executable "target/$target/debug/examples/pack" --arch "$arch"
+
+      - name: Check every bundle with the official CLI
+        shell: bash
+        run: |
+          for bundle in target/bundles/*.mcpb; do
+            echo "packed $bundle"
+            name="$(basename "$bundle" .mcpb)"
+            npx -y @anthropic-ai/mcpb@latest unpack "$bundle" "unpacked-$name"
+            npx -y @anthropic-ai/mcpb@latest validate "unpacked-$name"
+          done

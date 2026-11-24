@@ -91,9 +91,7 @@ last two are about the crate and its release.
 - [x] Crate docs as the front door: the spec version written, the platform limitation, and an
   example that is a doctest. The README is the crate's documentation (`#![doc = include_str!]`), so
   `cargo test` compiles its example.
-- [ ] CI: a matrix job that cross-compiles a server per target and packs a bundle per target. That
-  is the question every user of this crate has, and a working answer is better than a paragraph.
-  (CI itself exists: fmt, clippy, docs and the tests on three platforms.)
+- [x] CI packs a bundle: `examples/pack.rs` packs the example binary (or one you point it at, with `--executable` and `--arch`), and a job on each of the three platforms unpacks the result and has the official CLI validate the manifest. On macOS it also packs the other Apple architecture from a cross-built binary. Arbitrary cross-compilation (Linux arm64, Windows arm64) would need other toolchains and is not there.
 - [ ] Prove the declared MSRV: `rust-version = "1.85"`, which edition 2024 needs. CI tests the
   stable toolchain alone, and an MSRV job needs a committed `Cargo.lock`, since dependencies float
   while the lockfile is ignored.
