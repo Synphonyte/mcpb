@@ -32,11 +32,12 @@ last two are about the crate and its release.
 ## `server.mcp_config` and `user_config`
 
 - [x] `env`, which is where a `user_config` secret belongs: `"API_KEY": "${user_config.api_key}"`.
-- [ ] One bundle per OS. `platform_overrides` is written, but only for the bundle's own platform:
-  `compatibility.platforms` is `[platform]` and `BundleSpec::entry_point` derives one file name, so
-  a bundle cannot hold the darwin, win32 and linux binaries and pick between them yet. Lifting that
-  needs `platforms` as a list and one executable per platform. Per-CPU architecture still cannot be
-  switched, so x64 and arm64 stay separate bundles unless the server is a universal macOS binary.
+- [x] One bundle per OS: `executables` maps each `Platform` to an `Executable` (path and arch), the
+  bundle declares every platform in `compatibility.platforms`, writes each binary under its own name
+  (`<name>`, `<name>-<platform>`, `.exe` on Windows) and generates the `platform_overrides` command
+  that starts each platform's binary. `file_name` names all of them with their architectures.
+  Per-CPU architecture still cannot be switched, so x64 and arm64 stay separate bundles unless the
+  server is a universal macOS binary.
 - [x] `user_config` entries of every kind: `string` (with `sensitive`), `number` (with `min` and
   `max`), `boolean`, `directory`, `file`, and `multiple` and `default` on all of them. `UserConfig`
   has a constructor per kind, and `validate` checks that a default fits its type. This removed

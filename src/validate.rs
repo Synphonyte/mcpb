@@ -27,6 +27,18 @@ impl BundleSpec {
                 self.version
             ));
         }
+        if self.executables.is_empty() {
+            problems.push("the bundle runs on no platform: give it an executable".to_string());
+        }
+        for (platform, executable) in &self.executables {
+            if !is_name(&executable.arch) {
+                problems.push(format!(
+                    "the {} executable's arch {:?} may only hold ASCII letters, digits, '-', '_' and '.'",
+                    platform.as_str(),
+                    executable.arch
+                ));
+            }
+        }
         if self.description.trim().is_empty() {
             problems.push("description is empty".to_string());
         }
@@ -247,13 +259,12 @@ impl BundleSpec {
         }
         problems.extend(check_env(&self.env, "env", &user_config));
         for (platform, config) in &self.platform_overrides {
-            // The manifest names this one platform, so no client would ever read
-            // another platform's override.
-            if *platform != self.platform {
+            // Every platform of the manifest starts a binary, so an override for
+            // one without is never read.
+            if !self.executables.contains_key(platform) {
                 problems.push(format!(
-                    "platform_overrides.{} does not apply: the bundle runs on {} alone",
-                    platform.as_str(),
-                    self.platform.as_str()
+                    "platform_overrides.{} does not apply: the bundle has no executable for it",
+                    platform.as_str()
                 ));
             }
             problems.extend(check_override(*platform, config, &user_config));
@@ -474,12 +485,11 @@ fn is_locale(locale: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
 
     use serde_json::json;
 
     use super::*;
-    use crate::{Author, Icon, Localization, Prompt, Repository, UserConfig};
+    use crate::{Author, Executable, Icon, Localization, Prompt, Repository, UserConfig};
 
     fn spec() -> BundleSpec {
         BundleSpec {
@@ -487,8 +497,10 @@ mod tests {
             version: "1.2.3".to_string(),
             description: "A test server.".to_string(),
             author: Author::new("Test"),
-            platform: Platform::Linux,
-            executable: PathBuf::from("server-binary"),
+            executables: BTreeMap::from([(
+                Platform::Linux,
+                Executable::new("server-binary", "x64"),
+            )]),
             tools: vec![("whoami".to_string(), "Who the caller is.".to_string())],
             user_config: vec![UserConfig::directory(
                 "project_dir",
@@ -770,7 +782,8 @@ mod tests {
     #[test]
     fn platform_overrides_are_checked_like_the_rest() {
         let mut spec = spec();
-        spec.platform = Platform::Win32;
+        spec.executables =
+            BTreeMap::from([(Platform::Win32, Executable::new("server-binary", "x64"))]);
         spec.platform_overrides.insert(
             Platform::Win32,
             PlatformConfig {
@@ -793,6 +806,27 @@ mod tests {
     }
 
     #[test]
+    fn a_bundle_needs_an_executable_with_an_architecture() {
+        let mut without = spec();
+        without.executables.clear();
+        assert_eq!(
+            problems(&without),
+            ["the bundle runs on no platform: give it an executable"]
+        );
+
+        let mut bad_arch = spec();
+        bad_arch
+            .executables
+            .insert(Platform::Linux, Executable::new("server-binary", "x 64"));
+        assert_eq!(
+            problems(&bad_arch),
+            [
+                "the linux executable's arch \"x 64\" may only hold ASCII letters, digits, '-', '_' and '.'"
+            ]
+        );
+    }
+
+    #[test]
     fn an_override_for_another_platform_does_not_apply() {
         let mut spec = spec();
         spec.platform_overrides.insert(
@@ -805,7 +839,7 @@ mod tests {
 
         assert_eq!(
             problems(&spec),
-            ["platform_overrides.win32 does not apply: the bundle runs on linux alone"]
+            ["platform_overrides.win32 does not apply: the bundle has no executable for it"]
         );
     }
 

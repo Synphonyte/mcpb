@@ -15,7 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use mcpb::{Author, BundleSpec, Platform, UserConfig};
+use mcpb::{Author, BundleSpec, Executable, Platform, UserConfig};
 
 fn main() -> ExitCode {
     match pack() {
@@ -60,8 +60,7 @@ fn pack() -> Result<PathBuf, String> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         description: "A bundle built by the mcpb crate's own example.".to_string(),
         author: Author::new("Synphonyte"),
-        platform,
-        executable,
+        executables: BTreeMap::from([(platform, Executable::new(executable, arch.clone()))]),
         tools: vec![("greet".to_string(), "Say hello to a name.".to_string())],
         user_config: vec![UserConfig {
             required: true,
@@ -75,7 +74,7 @@ fn pack() -> Result<PathBuf, String> {
     let directory = PathBuf::from("target/bundles");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Can't create {}: {error}", directory.display()))?;
-    let bundle = directory.join(spec.file_name(&arch));
+    let bundle = directory.join(spec.file_name());
     spec.pack(&bundle).map_err(|error| error.to_string())?;
 
     Ok(bundle)

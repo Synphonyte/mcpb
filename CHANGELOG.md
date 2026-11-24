@@ -32,12 +32,18 @@ All notable changes to this crate are documented here. It follows
   `Display` and `std::error::Error` (`Invalid`, `Read`, `Write`, `Name`, `Icon`, `Clash`) instead of
   a `String`, so callers can match on what went wrong and `?` it into their own error type - anyhow
   included.
+- `BundleSpec::executables`: one binary per platform the bundle runs on. A
+  bundle of several platforms writes each binary (`<name>`, `<name>-<platform>`
+  and `.exe` on Windows), declares every platform in
+  `compatibility.platforms`, and gives each platform but the first its own
+  `command` through `platform_overrides`. `Executable` carries the binary's
+  `path` and `arch`.
 - `Default for BundleSpec`, so a spec spells only the fields it sets.
 - `BundleSpec::env`, written as `server.mcp_config.env`.
 - `BundleSpec::platform_overrides`, written as
   `server.mcp_config.platform_overrides` (`PlatformConfig`: `command`, `args`,
-  `env`) for the bundle's own platform; an override for another platform is
-  refused, since a bundle runs on one platform.
+  `env`); an override for a platform the bundle has no executable for is
+  refused.
 - `BundleSpec::prompts` (`Prompt`: `name`, `description`, `arguments`, `text`),
   written as the manifest's `prompts`.
 - `BundleSpec::localization` (`Localization`: `default_locale`, `locales`),
@@ -59,10 +65,19 @@ All notable changes to this crate are documented here. It follows
 - **Breaking:** `directory` is gone in favour of `UserConfig::directory` in
   `user_config`, and `pack` no longer appends it as an argument: `args` names
   `${user_config.<key>}` where the spec wants it.
+- **Breaking:** `platform` and `executable` are gone in favour of
+  `executables`, a map from `Platform` to `Executable` (`path` and `arch`),
+  which is how a bundle runs on several platforms. `file_name` takes no
+  argument now - it names every platform with its architecture, such as
+  `<name>-<version>-darwin-arm64-win32-x64.mcpb` - and `entry_point` returns
+  `Option<String>`, the first platform's binary.
 - `validate` also refuses an author without a name, an email or a URL that does
   not look like one, an empty `long_description` or `license`, repeated
   keywords, a `_meta` namespace that holds no object, and a `user_config` entry
   whose key, default, or `min` and `max` do not fit its type.
+- `validate` refuses a bundle without an executable, an architecture that cannot
+  be a file name, and a `platform_overrides` entry for a platform the bundle has
+  no executable for.
 - The same spec now packs to the same bytes every time: the entries are written in a fixed order
   with a fixed timestamp, and the executable is streamed into the zip instead of read whole.
 - `pack` refuses a spec that `validate` rejects, and an icon that is not a PNG,

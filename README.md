@@ -13,7 +13,7 @@ cargo add mcpb
 ```rust,no_run
 use std::collections::BTreeMap;
 
-use mcpb::{Author, BundleSpec, Icon, Platform, Prompt, UserConfig};
+use mcpb::{Author, BundleSpec, Executable, Icon, Platform, Prompt, UserConfig};
 
 fn main() -> Result<(), mcpb::Error> {
     let spec = BundleSpec {
@@ -22,9 +22,10 @@ fn main() -> Result<(), mcpb::Error> {
         version: "1.2.3".into(),
         description: "What the server does.".into(),
         author: Author::new("Me"),
-        platform: Platform::Darwin,
-        executable: "target/release/my-server".into(),
-        extra_executables: Vec::new(),
+        executables: BTreeMap::from([(
+            Platform::Darwin,
+            Executable::new("target/release/my-server", "arm64"),
+        )]),        extra_executables: Vec::new(),
         resources: vec!["THIRD-PARTY-NOTICES.md".into()],
         icon: Some("assets/icon.png".into()),
         icons: vec![Icon {
@@ -58,10 +59,12 @@ fn main() -> Result<(), mcpb::Error> {
 }
 ```
 
-A bundle holds the binary of **one** platform: the manifest can switch the command per operating
-system but not per CPU architecture, so each OS/architecture is its own bundle.
-`BundleSpec::file_name` names it the way the releases do. The crate needs Rust 1.85 or later, since
-it is edition 2024.
+A bundle holds one server binary per platform it runs on. Usually that is one platform, because a
+binary only runs where it was built: the manifest can switch the command per operating system but
+not per CPU architecture, so each OS/architecture is its own bundle. Give `executables` several
+platforms and the bundle starts each platform's own binary through `platform_overrides`;
+`BundleSpec::file_name` names the bundle after them, the way the releases do. The crate needs Rust
+1.85 or later, since it is edition 2024.
 
 Everything but the name, the version, the description, the author, the platform and the executable
 has a default, so `..BundleSpec::default()` keeps a spec to what it says.
@@ -72,12 +75,13 @@ Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation
 ## What goes into a bundle
 
 ```text
-my-server-1.2.3-darwin-arm64.mcpb
+my-server-1.2.3-darwin-arm64-win32-x64.mcpb
 ├── manifest.json                  # written from the spec
 ├── icon.png                       # `icon`, at the root, where clients look for it
 ├── screenshot.png                 # `screenshots`, likewise
 ├── server/
-│   ├── my-server                  # `executable`, mode 755
+│   ├── my-server                  # the first platform's binary, mode 755
+│   ├── my-server-win32.exe        # every further platform's, mode 755
 │   ├── helper                     # `extra_executables`, mode 755
 │   └── THIRD-PARTY-NOTICES.md     # `resources`, mode 644
 └── mcpb-resources/
@@ -93,8 +97,9 @@ boxes, directories and files); and `server.mcp_config`: the command (`${__dirnam
 arguments, the environment (`env`), and the per-platform overrides.
 
 The first icon without a theme is also written as the manifest's plain `icon`, which clients that
-read only that field show. `platform_overrides` describes what the bundle's own platform runs
-instead; a bundle names one platform, so an override for another one is refused.
+read only that field show. Each platform of the bundle starts its own binary: the manifest's
+`entry_point` is the first platform's file and every other platform overrides the command, unless
+the spec gives that platform a wrapper of its own to run.
 
 `pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
 partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a
@@ -125,7 +130,8 @@ spec. It looks at the spec alone:
   `${user_config.<key>}` of a key the manifest declares
 - environment variables are named like environment variables
 - icon sizes read `WIDTHxHEIGHT`, and locale codes read like `en-US`
-- `platform_overrides` only names the bundle's own platform, the only one it can run on
+- `platform_overrides` names a platform the bundle has an executable for: the one starting that
+  platform's own binary, or a wrapper around it
 - every `user_config` entry has a key of ASCII letters, digits, `_`, `-` and `.` that is used once, a
   title and a description, and a default that fits its type; `min` and `max` only bound a number,
   and `min` is not above `max`

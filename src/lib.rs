@@ -147,13 +147,6 @@ impl Platform {
             Self::Linux
         }
     }
-
-    fn executable_name(self, name: &str) -> String {
-        match self {
-            Self::Win32 => format!("{name}.exe"),
-            _ => name.to_string(),
-        }
-    }
 }
 
 /// What kind of value the client asks for in a [`UserConfig`].
@@ -344,14 +337,14 @@ pub struct Localization {
     pub locales: BTreeMap<String, PathBuf>,
 }
 
-/// What a platform runs instead of [`BundleSpec::args`] and
-/// [`BundleSpec::env`] (`mcp_config.platform_overrides`). A bundle of this
-/// crate runs on [`BundleSpec::platform`] alone, so only that platform's
-/// override is read; [`BundleSpec::validate`] refuses any other, and an
-/// override that sets nothing is not written at all.
+/// What a platform runs instead of the bundle's command, [`BundleSpec::args`]
+/// and [`BundleSpec::env`] (`mcp_config.platform_overrides`). Every platform of
+/// the bundle starts its own binary; [`BundleSpec::validate`] refuses an
+/// override for a platform without one, and an override that sets nothing is
+/// not written at all.
 #[derive(Clone, Debug, Default)]
 pub struct PlatformConfig {
-    /// What to run instead of the server's own command.
+    /// What to run instead of that platform's binary, for a wrapper around it.
     pub command: Option<String>,
     /// What to pass instead of [`BundleSpec::args`].
     pub args: Option<Vec<String>>,
@@ -360,7 +353,7 @@ pub struct PlatformConfig {
 }
 
 impl PlatformConfig {
-    fn to_manifest(&self) -> Value {
+    fn to_manifest(&self) -> Map<String, Value> {
         let mut config = Map::new();
         if let Some(command) = &self.command {
             config.insert("command".to_string(), json!(command));
@@ -371,7 +364,7 @@ impl PlatformConfig {
         if let Some(env) = &self.env {
             config.insert("env".to_string(), json!(env));
         }
-        Value::Object(config)
+        config
     }
 }
 
@@ -431,20 +424,44 @@ impl Repository {
     }
 }
 
+/// A server binary, and the CPU architecture it was built for.
+#[derive(Clone, Debug)]
+pub struct Executable {
+    /// The compiled server.
+    pub path: PathBuf,
+    /// Such as `arm64` or `x64`. The manifest cannot switch per architecture,
+    /// so it only names the bundle - see [`BundleSpec::file_name`].
+    pub arch: String,
+}
+
+impl Executable {
+    /// The binary at `path`, built for `arch`.
+    pub fn new(path: impl Into<PathBuf>, arch: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            arch: arch.into(),
+        }
+    }
+}
+
 /// What goes into a bundle.
 ///
-/// Every field but the name, the version, the description, the author, the
-/// platform and the executable can be left at [`Default::default`], so a spec
-/// is usually built with a struct update:
+/// Every field but the name, the version, the description, the author and the
+/// executables can be left at [`Default::default`], so a spec is usually built
+/// with a struct update:
 ///
 /// ```
-/// # use mcpb::{Author, BundleSpec, Platform};
+/// # use std::collections::BTreeMap;
+/// # use mcpb::{Author, BundleSpec, Executable, Platform};
 /// let spec = BundleSpec {
 ///     name: "my-server".into(),
 ///     version: "1.2.3".into(),
 ///     description: "What the server does.".into(),
 ///     author: Author::new("Me"),
-///     executable: "target/release/my-server".into(),
+///     executables: BTreeMap::from([(
+///         Platform::Darwin,
+///         Executable::new("target/release/my-server", "arm64"),
+///     )]),
 ///     ..BundleSpec::default()
 /// };
 /// # let _ = spec;
@@ -477,11 +494,10 @@ pub struct BundleSpec {
     pub keywords: Vec<String>,
     /// The privacy policies of the services the server talks to.
     pub privacy_policies: Vec<String>,
-    /// The platform the bundle's binary is for. The bundle's platform by
-    /// default.
-    pub platform: Platform,
-    /// The compiled server for [`Self::platform`].
-    pub executable: PathBuf,
+    /// The platforms the bundle runs on, each with the server binary built for
+    /// it. One entry is the usual case; several make one bundle that runs on
+    /// each of them, each platform starting its own binary.
+    pub executables: BTreeMap<Platform, Executable>,
     /// Further executables placed next to the server in `server/`, under
     /// their own file names (helpers the server runs, such as `labuild`).
     pub extra_executables: Vec<PathBuf>,
@@ -516,7 +532,8 @@ pub struct BundleSpec {
     /// Environment variables of the server, which the client adds to its own.
     /// The `${...}` variables in the values are substituted.
     pub env: BTreeMap<String, String>,
-    /// What [`Self::platform`] runs instead of [`Self::args`] and [`Self::env`].
+    /// What a platform runs instead of the command, [`Self::args`] and
+    /// [`Self::env`]. A platform without an executable is refused.
     pub platform_overrides: BTreeMap<Platform, PlatformConfig>,
     /// Platform metadata written verbatim (`_meta`), by reverse-DNS namespace,
     /// each namespace holding an object: such as Windows' `package_family_name`
@@ -526,8 +543,8 @@ pub struct BundleSpec {
 
 impl Default for BundleSpec {
     /// A spec that still has to be filled in: the empty name, version and
-    /// description, this platform and no executable are what
-    /// [`BundleSpec::validate`] refuses.
+    /// description, and no executable, are what [`BundleSpec::validate`]
+    /// refuses.
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -543,8 +560,7 @@ impl Default for BundleSpec {
             license: None,
             keywords: Vec::new(),
             privacy_policies: Vec::new(),
-            platform: Platform::host(),
-            executable: PathBuf::new(),
+            executables: BTreeMap::new(),
             extra_executables: Vec::new(),
             resources: Vec::new(),
             icon: None,
@@ -590,9 +606,30 @@ impl Prompt {
 }
 
 impl BundleSpec {
-    /// The path of the executable inside the bundle.
-    pub fn entry_point(&self) -> String {
-        format!("{SERVER_DIR}/{}", self.platform.executable_name(&self.name))
+    /// The path of a platform's executable inside the bundle. The first
+    /// platform's binary is named after the bundle, so it is the manifest's
+    /// `entry_point`; the others carry their platform's name too, since a zip
+    /// cannot hold two files with one name.
+    fn executable_path(&self, platform: Platform) -> String {
+        let stem = if self.executables.keys().next() == Some(&platform) {
+            self.name.clone()
+        } else {
+            format!("{}-{}", self.name, platform.as_str())
+        };
+        let file = match platform {
+            Platform::Win32 => format!("{stem}.exe"),
+            _ => stem,
+        };
+        format!("{SERVER_DIR}/{file}")
+    }
+
+    /// The path of the manifest's `entry_point`: the first platform's binary,
+    /// which clients start where no platform override says otherwise.
+    pub fn entry_point(&self) -> Option<String> {
+        self.executables
+            .keys()
+            .next()
+            .map(|platform| self.executable_path(*platform))
     }
 
     /// The `manifest.json`.
@@ -606,7 +643,7 @@ impl BundleSpec {
             "author": self.author.to_manifest(),
             "server": {
                 "type": "binary",
-                "entry_point": self.entry_point(),
+                "entry_point": self.entry_point().unwrap_or_default(),
                 "mcp_config": self.mcp_config(),
             },
             "tools": self
@@ -614,7 +651,13 @@ impl BundleSpec {
                 .iter()
                 .map(|(name, description)| json!({ "name": name, "description": description }))
                 .collect::<Vec<_>>(),
-            "compatibility": { "platforms": [self.platform.as_str()] },
+            "compatibility": {
+                "platforms": self
+                    .executables
+                    .keys()
+                    .map(|platform| platform.as_str())
+                    .collect::<Vec<_>>(),
+            },
         });
 
         for (key, value) in [
@@ -686,21 +729,40 @@ impl BundleSpec {
     /// What clients run and with which arguments (`server.mcp_config`).
     fn mcp_config(&self) -> Value {
         let args: Vec<Value> = self.args.iter().map(|arg| json!(arg)).collect();
+        let command = self
+            .entry_point()
+            .map(|path| format!("${{__dirname}}/{path}"));
 
         let mut config = Map::new();
-        config.insert(
-            "command".to_string(),
-            json!(format!("${{__dirname}}/{}", self.entry_point())),
-        );
+        config.insert("command".to_string(), json!(command.unwrap_or_default()));
         config.insert("args".to_string(), Value::Array(args));
         config.insert("env".to_string(), json!(self.env));
 
-        let overrides: Map<String, Value> = self
-            .platform_overrides
-            .iter()
-            .map(|(platform, config)| (platform.as_str().to_string(), config.to_manifest()))
-            .filter(|(_, config)| config.as_object().is_some_and(|config| !config.is_empty()))
-            .collect();
+        // Each platform starts the binary built for it. The first one is the
+        // command above; every other platform overrides it, and what the spec
+        // overrides itself comes on top.
+        let first = self.executables.keys().next().copied();
+        let mut overrides = Map::new();
+        for platform in self.executables.keys().copied() {
+            let mut override_config = self
+                .platform_overrides
+                .get(&platform)
+                .map(PlatformConfig::to_manifest)
+                .unwrap_or_default();
+
+            if Some(platform) != first && !override_config.contains_key("command") {
+                override_config.insert(
+                    "command".to_string(),
+                    json!(format!("${{__dirname}}/{}", self.executable_path(platform))),
+                );
+            }
+            if !override_config.is_empty() {
+                overrides.insert(
+                    platform.as_str().to_string(),
+                    Value::Object(override_config),
+                );
+            }
+        }
         if !overrides.is_empty() {
             config.insert("platform_overrides".to_string(), Value::Object(overrides));
         }
@@ -719,14 +781,18 @@ impl BundleSpec {
         })
     }
 
-    /// The bundle's file name: `<name>-<version>-<platform>-<arch>.mcpb`.
-    pub fn file_name(&self, arch: &str) -> String {
-        format!(
-            "{}-{}-{}-{arch}.mcpb",
-            self.name,
-            self.version,
-            self.platform.as_str()
-        )
+    /// The bundle's file name. For one platform
+    /// `<name>-<version>-<platform>-<arch>.mcpb`; for several, each platform
+    /// with the architecture given for it, such as
+    /// `<name>-<version>-darwin-arm64-win32-x64.mcpb`.
+    pub fn file_name(&self) -> String {
+        let platforms = self
+            .executables
+            .iter()
+            .map(|(platform, executable)| format!("{}-{}", platform.as_str(), executable.arch))
+            .collect::<Vec<_>>()
+            .join("-");
+        format!("{}-{}-{platforms}.mcpb", self.name, self.version)
     }
 
     /// Writes the bundle to `path`: `manifest.json`, the server with the
@@ -827,7 +893,14 @@ impl BundleSpec {
         const EXECUTABLE: u32 = 0o755;
         const PLAIN: u32 = 0o644;
 
-        let mut files = vec![(self.entry_point(), self.executable.as_path(), EXECUTABLE)];
+        let mut files = Vec::new();
+        for (platform, executable) in &self.executables {
+            files.push((
+                self.executable_path(*platform),
+                executable.path.as_path(),
+                EXECUTABLE,
+            ));
+        }
 
         // Helpers and resources sit next to the server, from where the manifest
         // has clients run them.
@@ -918,8 +991,7 @@ mod tests {
             version: "1.2.3".to_string(),
             description: "A test server.".to_string(),
             author: Author::new("Test"),
-            platform,
-            executable,
+            executables: BTreeMap::from([(platform, Executable::new(executable, "arm64"))]),
             tools: vec![("whoami".to_string(), "Who the caller is.".to_string())],
             user_config: vec![UserConfig::directory(
                 "project_dir",
@@ -973,8 +1045,11 @@ mod tests {
     fn windows_bundles_hold_an_exe() {
         let spec = spec(Platform::Win32, "x".into());
 
-        assert_eq!(spec.entry_point(), "server/test-server.exe");
-        assert_eq!(spec.file_name("x64"), "test-server-1.2.3-win32-x64.mcpb");
+        assert_eq!(
+            spec.entry_point().as_deref(),
+            Some("server/test-server.exe")
+        );
+        assert_eq!(spec.file_name(), "test-server-1.2.3-win32-arm64.mcpb");
     }
 
     #[test]
@@ -1447,6 +1522,65 @@ mod tests {
 
         let mut zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
         assert!(zip.by_name("shot.png").is_ok());
+    }
+
+    #[test]
+    fn a_bundle_of_several_platforms_starts_each_platforms_binary() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let darwin = dir.path().join("server-darwin");
+        fs::write(&darwin, b"\x7fELF fake").unwrap();
+        let win32 = dir.path().join("server-win32.exe");
+        fs::write(&win32, b"MZ fake").unwrap();
+
+        let mut spec = spec(Platform::Darwin, darwin);
+        spec.executables
+            .insert(Platform::Win32, Executable::new(win32, "x64"));
+        spec.platform_overrides.insert(
+            Platform::Win32,
+            PlatformConfig {
+                args: Some(vec!["--windows".to_string()]),
+                ..PlatformConfig::default()
+            },
+        );
+
+        let manifest = spec.manifest();
+        assert_eq!(
+            manifest["compatibility"]["platforms"],
+            json!(["darwin", "win32"])
+        );
+        assert_eq!(manifest["server"]["entry_point"], "server/test-server");
+        assert_eq!(
+            manifest["server"]["mcp_config"]["platform_overrides"]["win32"],
+            json!({
+                "command": "${__dirname}/server/test-server-win32.exe",
+                "args": ["--windows"],
+            })
+        );
+        // The first platform's binary is the command itself.
+        assert!(
+            manifest["server"]["mcp_config"]["platform_overrides"]
+                .get("darwin")
+                .is_none()
+        );
+        assert_eq!(
+            spec.file_name(),
+            "test-server-1.2.3-darwin-arm64-win32-x64.mcpb"
+        );
+
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+
+        let zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
+        let mut names: Vec<_> = zip.file_names().map(str::to_string).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "manifest.json",
+                "server/test-server",
+                "server/test-server-win32.exe",
+            ]
+        );
     }
 
     #[test]
