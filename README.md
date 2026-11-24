@@ -8,48 +8,116 @@ one click. No Node and no `mcpb` CLI.
 cargo add mcpb
 ```
 
-```rust
-use mcpb::{BundleSpec, DirectoryPrompt, Platform};
+```rust,no_run
+use std::collections::BTreeMap;
 
-let spec = BundleSpec {
-    name: "my-server".into(),
-    display_name: None,
-    version: "1.2.3".into(),
-    description: "What the server does.".into(),
-    author: "Me".into(),
-    platform: Platform::Darwin,
-    executable: "target/release/my-server".into(),
-    extra_executables: Vec::new(),
-    resources: Vec::new(),
-    tools: vec![("whoami".into(), "Who the caller is.".into())],
-    directory: Some(DirectoryPrompt {
-        title: "Project directory".into(),
-        description: "The directory the server works in.".into(),
-    }),
-    args: Vec::new(),
-};
+use mcpb::{BundleSpec, DirectoryPrompt, Icon, Platform, Prompt};
 
-spec.pack("dist/my-server-1.2.3-darwin-arm64.mcpb".as_ref())?;
+fn main() -> Result<(), String> {
+    let spec = BundleSpec {
+        name: "my-server".into(),
+        display_name: None,
+        version: "1.2.3".into(),
+        description: "What the server does.".into(),
+        author: "Me".into(),
+        platform: Platform::Darwin,
+        executable: "target/release/my-server".into(),
+        extra_executables: Vec::new(),
+        resources: vec!["THIRD-PARTY-NOTICES.md".into()],
+        icon: Some("assets/icon.png".into()),
+        icons: vec![Icon {
+            path: "assets/icon-dark.png".into(),
+            size: "512x512".into(),
+            theme: Some("dark".into()),
+        }],
+        tools: vec![("whoami".into(), "Who the caller is.".into())],
+        prompts: vec![Prompt {
+            name: "review".into(),
+            description: Some("Review a file.".into()),
+            arguments: vec!["path".into()],
+            text: "Please review ${arguments.path}.".into(),
+        }],
+        localization: None,
+        directory: Some(DirectoryPrompt {
+            title: "Project directory".into(),
+            description: "The directory the server works in.".into(),
+        }),
+        args: vec!["--verbose".into()],
+        env: BTreeMap::from([("LOG_LEVEL".into(), "debug".into())]),
+        platform_overrides: BTreeMap::new(),
+    };
+
+    spec.pack("dist/my-server-1.2.3-darwin-arm64.mcpb".as_ref())
+}
 ```
 
 A bundle holds the binary of **one** platform: the manifest can switch the command per operating
 system but not per CPU architecture, so each OS/architecture is its own bundle.
 `BundleSpec::file_name` names it the way the releases do.
 
-## Status
+Published as [`mcpb`](https://crates.io/crates/mcpb); before 1.0 the API is not stable.
 
-Published as [`mcpb`](https://crates.io/crates/mcpb) 0.1.0, which reserves the name; the API is
-not stable yet.
+## What goes into a bundle
 
-Writes the `manifest.json` (version 0.3) and the archive: executables with mode 755, resources with
-644, under a temporary name so a failed pack leaves no partial bundle, and two files that would share
-a name in the zip are refused.
+```text
+my-server-1.2.3-darwin-arm64.mcpb
+├── manifest.json                  # written from the spec
+├── icon.png                       # `icon`, at the root, where clients look for it
+├── server/
+│   ├── my-server                  # `executable`, mode 755
+│   ├── helper                     # `extra_executables`, mode 755
+│   └── THIRD-PARTY-NOTICES.md     # `resources`, mode 644
+└── mcpb-resources/
+    └── de-DE.json                 # `localization`, mode 644
+```
 
-Not yet: manifest validation, icons, `server.mcp_config.env`,
-`compatibility.platform_overrides`, prompts, localization, and signing (`mcpb sign`/`verify`).
+The manifest is written in version 0.3 (`MANIFEST_VERSION`) with the name, version, description and
+author of the server, its icon(s), tools and prompts, its `compatibility.platforms`, the directory
+it asks for at install, and `server.mcp_config`: the command (`${__dirname}/server/…`), the
+arguments, the environment (`env`), and the per-platform overrides.
+
+The first icon without a theme is also written as the manifest's plain `icon`, which clients that
+read only that field show. `platform_overrides` describes what the bundle's own platform runs
+instead; a bundle names one platform, so an override for another one is refused.
+
+`pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
+partial bundle behind. It refuses two different files that would share a name in the zip; the same
+file used twice, as the plain icon and as an icon variant, is written once.
+
+## Checks
+
+`BundleSpec::validate` reports everything clients would refuse, and `pack` refuses to write such a
+spec. It looks at the spec alone:
+
+- the name may only hold ASCII letters, digits, `-`, `_` and `.`, and cannot be `.` or `..`, since
+  it names the executable and the bundle file
+- the version is a semantic version
+- description, author and the directory prompt say something, and so do every tool's description
+  and every prompt's text
+- a tool, a prompt and a prompt's arguments are each named once
+- `args` and `env` only use the variables clients substitute: `${__dirname}`, `${HOME}`,
+  `${DOCUMENTS}`, `${DOWNLOADS}`, `${DESKTOP}`, `${pathSeparator}`, `${/}`, and
+  `${user_config.<key>}` of a key the manifest declares
+- environment variables are named like environment variables
+- icon sizes read `WIDTHxHEIGHT`, and locale codes read like `en-US`
+- `platform_overrides` only names the bundle's own platform, the only one it can run on
+
+`pack` additionally reads the files: an icon that is not a PNG is refused, since clients show
+nothing else, and so is a file whose name is already taken in the zip.
+
+## Not yet
+
+Signing (`mcpb sign`/`verify`). Bundles are unsigned, which `mcpb info` reports; sign them with the
+`mcpb` CLI after packing if you need a signature.
+
 [TODO.md](TODO.md) is the full list, both of what the spec has and what the crate still needs to be
-useful on its own.
+useful on its own: more `user_config` kinds, the rest of the manifest's metadata fields, `_meta`,
+nested files with `.mcpbignore`, reading a bundle back, and a `cargo install mcpb` binary.
+
+## Changelog
+
+What changed in each release: [CHANGELOG.md](https://github.com/Synphonyte/mcpb/blob/main/CHANGELOG.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/Synphonyte/mcpb/blob/main/LICENSE).
