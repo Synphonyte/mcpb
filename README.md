@@ -55,9 +55,11 @@ fn main() -> Result<(), String> {
 
 A bundle holds the binary of **one** platform: the manifest can switch the command per operating
 system but not per CPU architecture, so each OS/architecture is its own bundle.
-`BundleSpec::file_name` names it the way the releases do.
+`BundleSpec::file_name` names it the way the releases do. The crate needs Rust 1.85 or later, since
+it is edition 2024.
 
-Published as [`mcpb`](https://crates.io/crates/mcpb); before 1.0 the API is not stable.
+Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation on
+[docs.rs](https://docs.rs/mcpb); before 1.0 the API is not stable.
 
 ## What goes into a bundle
 
@@ -105,7 +107,7 @@ spec. It looks at the spec alone:
 - `platform_overrides` only names the bundle's own platform, the only one it can run on
 
 `pack` additionally reads the files: an icon that is not a PNG is refused, since clients show
-nothing else, and so is a file whose name is already taken in the zip.
+nothing else, and so is a second, different file whose name is already taken in the zip.
 
 ## Not yet
 
@@ -115,6 +117,21 @@ Signing (`mcpb sign`/`verify`). Bundles are unsigned, which `mcpb info` reports;
 [TODO.md](TODO.md) is the full list, both of what the spec has and what the crate still needs to be
 useful on its own: more `user_config` kinds, the rest of the manifest's metadata fields, `_meta`,
 nested files with `.mcpbignore`, reading a bundle back, and a `cargo install mcpb` binary.
+
+## Releasing
+
+Tag the commit whose `Cargo.toml` version is the one to release; the tag is `v<version>` and the
+changelog section for that version has to be dated, not `unreleased`:
+
+```sh
+git tag -a v0.2.0 -m v0.2.0
+git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` then publishes the crate to crates.io through Trusted Publishing
+and creates the GitHub release with that changelog section as its notes. A tag that does not name
+the crate's version, or a changelog entry without a date, is refused before anything is published;
+a re-run skips a version crates.io already has and still creates the release.
 
 ## Changelog
 

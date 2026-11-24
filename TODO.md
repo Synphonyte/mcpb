@@ -63,7 +63,8 @@ last two are about the crate and its release.
   `MCPB_SIG_V1`, a 4-byte little-endian length, the DER signature, `MCPB_SIG_END`. An unsigned
   bundle stays a plain zip, so this can come late; signing with the `mcpb` CLI after packing works
   today. A crypto stack is a heavy dependency for a crate that currently only writes files, so put
-  it behind a feature.
+  it behind a feature. Decided against for 0.2.0: clients only treat a CA-issued certificate as
+  signed, so a self-signed trailer buys little until someone needs a signed release.
 - [ ] Stream the executable into the zip instead of `fs::read`ing it whole, and pack to any
   `Write + Seek` rather than only to a path.
 - [ ] Pin reproducibility with a test. Entries are already written in a fixed order and the
@@ -92,6 +93,9 @@ last two are about the crate and its release.
 - [ ] CI: a matrix job that cross-compiles a server per target and packs a bundle per target. That
   is the question every user of this crate has, and a working answer is better than a paragraph.
   (CI itself exists: fmt, clippy, docs and the tests on three platforms.)
+- [ ] Prove the declared MSRV: `rust-version = "1.85"`, which edition 2024 needs. CI tests the
+  stable toolchain alone, and an MSRV job needs a committed `Cargo.lock`, since dependencies float
+  while the lockfile is ignored.
 - [ ] Test against the spec's own examples, at least
   [`examples/calculator-rust`](https://github.com/modelcontextprotocol/mcpb/tree/main/examples/calculator-rust):
   read the bundle the Node CLI produced and compare its manifest to ours, so "same shape" is
@@ -105,4 +109,8 @@ last two are about the crate and its release.
 - [x] Publish from a tag in CI instead of from a working copy, so the release and the commit always
   match. `.github/workflows/release.yml` publishes on a `v<version>` tag through crates.io Trusted
   Publishing and creates the GitHub release from the changelog.
+- [ ] Allow that workflow to publish: crates.io → the crate → Settings → Trusted Publishing → add a
+  GitHub publisher for owner `Synphonyte`, repository `mcpb`, workflow `release.yml`.
+- [ ] Cut 0.2.0: date the changelog's `0.2.0` section, commit, tag `v0.2.0`, push, and watch the
+  Release run publish the crate and open the release.
 - [ ] Check the built docs.rs page once the first release lands.
