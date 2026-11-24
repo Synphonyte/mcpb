@@ -110,11 +110,27 @@ impl From<zip::result::ZipError> for Error {
 }
 
 /// An operating system a bundle can target (`compatibility.platforms`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+///
+/// Platforms are ordered as the manifest spells them - `darwin`, `linux`,
+/// `win32` - so a bundle's entries, its `entry_point` and its file name do not
+/// depend on the order these variants are declared in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Platform {
     Darwin,
     Win32,
     Linux,
+}
+
+impl Ord for Platform {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for Platform {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Platform {
@@ -623,8 +639,9 @@ impl BundleSpec {
         format!("{SERVER_DIR}/{file}")
     }
 
-    /// The path of the manifest's `entry_point`: the first platform's binary,
-    /// which clients start where no platform override says otherwise.
+    /// The path of the manifest's `entry_point`: the binary of the first
+    /// platform in [`Platform`] order, which is the one clients start where no
+    /// platform override says otherwise.
     pub fn entry_point(&self) -> Option<String> {
         self.executables
             .keys()

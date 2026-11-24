@@ -49,6 +49,9 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::localization` (`Localization`: `default_locale`, `locales`),
   writing the manifest's `localization` and packing each locale at
   `mcpb-resources/<locale>.json`.
+- A test that checks every shape of manifest this crate writes against the
+  manifest format's own JSON schema, vendored in `tests/schemas/`, so what
+  clients accept is not only what our own tests expect.
 - Crate metadata for publishing: `repository`, `readme`, `keywords` and
   `rust-version`.
 - The README is now the crate documentation, so its example is compiled as a
@@ -90,6 +93,7 @@ All notable changes to this crate are documented here. It follows
 ### Dependencies
 
 - Added `semver`, which checks the version of a bundle.
+- Added `jsonschema`, a dev-dependency of the schema test only.
 
 ## 0.1.0 - 2026-11-20
 

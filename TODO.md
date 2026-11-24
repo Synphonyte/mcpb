@@ -49,9 +49,10 @@ last two are about the crate and its release.
   `name` that cannot be a file name, an empty description or author, variables clients do not
   substitute, duplicate tool, prompt and argument names and icon sizes that are not `WIDTHxHEIGHT`,
   and `pack` refuses such a spec before it writes anything, as well as a file it cannot read.
-- [ ] An `mcpb validate` equivalent: check the written manifest against the official JSON schema at
-  `schemas/mcpb-manifest-v0.3.schema.json` in the spec repo, so what clients accept is tested rather
-  than assumed.
+- [x] An `mcpb validate` equivalent: `cargo test` checks the manifests the crate writes against the
+  official JSON schema (`tests/manifest.rs`), with the schema vendored in `tests/schemas/` and
+  `jsonschema` as a dev-dependency. The CI job that packs a bundle per platform also runs the real
+  `mcpb validate` over the artifact.
 - [ ] Pack a directory tree instead of single files: `.mcpbignore` plus the CLI's default
   exclusion list (`.git`, `.DS_Store`, `node_modules/.cache`, `*.map`, lockfiles, …) and nested
   paths. `BundleSpec::files` deals in single files addressed by their own file name, placed under

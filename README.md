@@ -139,6 +139,10 @@ spec. It looks at the spec alone:
 `pack` additionally reads the files: an icon that is not a PNG is refused, since clients show
 nothing else, and so is a second, different file whose name is already taken in the zip.
 
+`cargo test` also validates what [`manifest`](BundleSpec::manifest) writes against the manifest
+format's own JSON schema (`tests/schemas/`, taken from the MCP Bundle repository), so what clients
+accept is checked rather than assumed from our own expectations.
+
 ## Not yet
 
 Signing (`mcpb sign`/`verify`). Bundles are unsigned, which `mcpb info` reports; sign them with the
