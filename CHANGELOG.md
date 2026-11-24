@@ -28,6 +28,10 @@ All notable changes to this crate are documented here. It follows
   (`string`, `number`, `boolean`, `directory`, `file`), written as the manifest's `user_config`.
 - `BundleSpec::pack_to` writes the bundle to any `Write + Seek`, such as a `Cursor` over a `Vec`,
   and hands it back; `pack` writes it to a path through the same code.
+- `pack`, `pack_to` and everything they call return `Error`, an enum that implements `Debug`,
+  `Display` and `std::error::Error` (`Invalid`, `Read`, `Write`, `Name`, `Icon`, `Clash`) instead of
+  a `String`, so callers can match on what went wrong and `?` it into their own error type - anyhow
+  included.
 - `Default for BundleSpec`, so a spec spells only the fields it sets.
 - `BundleSpec::env`, written as `server.mcp_config.env`.
 - `BundleSpec::platform_overrides`, written as

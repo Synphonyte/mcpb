@@ -76,7 +76,7 @@ fn pack() -> Result<PathBuf, String> {
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Can't create {}: {error}", directory.display()))?;
     let bundle = directory.join(spec.file_name(&arch));
-    spec.pack(&bundle)?;
+    spec.pack(&bundle).map_err(|error| error.to_string())?;
 
     Ok(bundle)
 }

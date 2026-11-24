@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use mcpb::{Author, BundleSpec, Icon, Platform, Prompt, UserConfig};
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), mcpb::Error> {
     let spec = BundleSpec {
         name: "my-server".into(),
         display_name: None,
@@ -102,6 +102,9 @@ partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, s
 the same spec packs to the same bytes every time. It refuses two different files that would share a
 name in the zip; the same file used twice, as the plain icon and as an icon variant, is written
 once.
+
+What went wrong comes back as an [`mcpb::Error`](Error): `Invalid` for the problems `validate`
+reports, and then the file that could not be read or the bundle that could not be written.
 
 ## Checks
 

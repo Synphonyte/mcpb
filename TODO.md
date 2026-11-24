@@ -74,8 +74,10 @@ last two are about the crate and its release.
 
 ## Making it usable from other projects
 
-- [ ] An error type instead of `String` in every `Result` — callers cannot match on a message,
-  and `?` into their own error type needs a conversion.
+- [x] An error type instead of `String` in every `Result`: `Error` implements `Debug`, `Display`
+  and `std::error::Error` with a variant per kind of failure (`Invalid` for the `validate`
+  problems, `Read`, `Write`, `Name`, `Icon`, `Clash`), so callers can match and `?` it into their
+  own error type. `validate` still returns the problems as `Vec<String>`, since that is a report.
 - [x] `BundleSpec` ergonomics: `Default` and `..BundleSpec::default()`, so callers spell only what
   they set. A builder is not needed while the fields are public and the struct is plain data.
 - [ ] Typed where the spec constrains the string: `version` should be a semver type, and

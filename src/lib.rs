@@ -23,6 +23,92 @@ const RESOURCES_DIR: &str = "mcpb-resources";
 /// What the first bytes of a file must be to be a PNG.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
+/// What can go wrong writing a bundle.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Error {
+    /// The spec would produce a bundle clients refuse. Every problem is here, and
+    /// [`BundleSpec::validate`] reports the same list.
+    Invalid(Vec<String>),
+    /// A file that belongs in the bundle could not be read.
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// The bundle could not be written.
+    Write { source: std::io::Error },
+    /// A file has no name of its own to be written under, or a name that is not
+    /// UTF-8.
+    Name(PathBuf),
+    /// A file that is meant to be an icon is not a PNG.
+    Icon(PathBuf),
+    /// Two files of the bundle would be written under the same name.
+    Clash { file: PathBuf, name: String },
+}
+
+impl Error {
+    fn read(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Read {
+            path: path.into(),
+            source,
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(problems) => {
+                write!(f, "the bundle can't be packed:")?;
+                for problem in problems {
+                    write!(f, "\n  - {problem}")?;
+                }
+                Ok(())
+            }
+            Self::Read { path, source } => write!(f, "can't read {}: {source}", path.display()),
+            Self::Write { source } => write!(f, "can't write the bundle: {source}"),
+            Self::Name(path) => write!(
+                f,
+                "{} needs a UTF-8 file name to be written into the bundle",
+                path.display()
+            ),
+            Self::Icon(path) => write!(
+                f,
+                "{} is not a PNG: clients only show PNG icons.",
+                path.display()
+            ),
+            Self::Clash { file, name } => write!(
+                f,
+                "{} would overwrite {name}: two files of the bundle share a name.",
+                file.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invalid(_) | Self::Name(_) | Self::Icon(_) | Self::Clash { .. } => None,
+            Self::Read { source, .. } | Self::Write { source } => Some(source),
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(source: std::io::Error) -> Self {
+        Self::Write { source }
+    }
+}
+
+impl From<zip::result::ZipError> for Error {
+    fn from(error: zip::result::ZipError) -> Self {
+        Self::Write {
+            source: std::io::Error::other(error),
+        }
+    }
+}
+
 /// An operating system a bundle can target (`compatibility.platforms`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Platform {
@@ -651,10 +737,9 @@ impl BundleSpec {
     /// A spec that [`Self::validate`] does not accept, and an icon that is not
     /// a PNG, are refused. The bundle is written under a temporary name and
     /// moved into place, so a failed pack leaves no partial bundle behind.
-    pub fn pack(&self, path: &Path) -> Result<(), String> {
+    pub fn pack(&self, path: &Path) -> Result<(), Error> {
         let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-        let file =
-            fs::File::create(&temp).map_err(|error| format!("Can't create {temp:?}: {error}"))?;
+        let file = fs::File::create(&temp)?;
 
         if let Err(error) = self.pack_to(file) {
             let _ = fs::remove_file(&temp);
@@ -663,7 +748,7 @@ impl BundleSpec {
 
         if let Err(error) = fs::rename(&temp, path) {
             let _ = fs::remove_file(&temp);
-            return Err(format!("Can't write {path:?}: {error}"));
+            return Err(Error::from(error));
         }
 
         Ok(())
@@ -674,14 +759,9 @@ impl BundleSpec {
     ///
     /// The same spec packs to the same bytes every time: the entries are written
     /// in a fixed order, with a fixed timestamp and no dependence on the host.
-    pub fn pack_to<W: Write + Seek>(&self, writer: W) -> Result<W, String> {
+    pub fn pack_to<W: Write + Seek>(&self, writer: W) -> Result<W, Error> {
         if let Err(problems) = self.validate() {
-            let problems = problems
-                .iter()
-                .map(|problem| format!("  - {problem}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Err(format!("The bundle can't be packed:\n{problems}"));
+            return Err(Error::Invalid(problems));
         }
 
         self.check_icons()?;
@@ -692,44 +772,36 @@ impl BundleSpec {
 
         let mut zip = zip::ZipWriter::new(writer);
 
-        let entry = |error: zip::result::ZipError| format!("Can't write the bundle: {error}");
         let plain = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             // A timestamp of its own would make the same spec pack to different
             // bytes on every run.
             .last_modified_time(zip::DateTime::default());
 
-        zip.start_file("manifest.json", plain).map_err(entry)?;
-        zip.write_all(&manifest)
-            .map_err(|error| error.to_string())?;
+        zip.start_file("manifest.json", plain)?;
+        zip.write_all(&manifest)?;
 
         for (name, file, mode) in files {
-            let mut source =
-                fs::File::open(file).map_err(|error| format!("Can't read {file:?}: {error}"))?;
-            zip.start_file(name, plain.unix_permissions(mode))
-                .map_err(entry)?;
-            std::io::copy(&mut source, &mut zip).map_err(|error| error.to_string())?;
+            let mut source = fs::File::open(file).map_err(|error| Error::read(file, error))?;
+            zip.start_file(name, plain.unix_permissions(mode))?;
+            std::io::copy(&mut source, &mut zip)?;
         }
 
-        zip.finish().map_err(entry)
+        Ok(zip.finish()?)
     }
 
     /// Refuses an icon that clients would not show: they only take PNG files.
-    fn check_icons(&self) -> Result<(), String> {
+    fn check_icons(&self) -> Result<(), Error> {
         for icon in self.icon_files() {
-            let mut file =
-                fs::File::open(icon).map_err(|error| format!("Can't read {icon:?}: {error}"))?;
+            let mut file = fs::File::open(icon).map_err(|error| Error::read(icon, error))?;
             let mut start_of_file = [0; PNG.len()];
             let is_png = match file.read_exact(&mut start_of_file) {
                 Ok(()) => start_of_file == *PNG,
                 Err(error) if error.kind() == ErrorKind::UnexpectedEof => false,
-                Err(error) => return Err(format!("Can't read {icon:?}: {error}")),
+                Err(error) => return Err(Error::read(icon, error)),
             };
             if !is_png {
-                return Err(format!(
-                    "{} is not a PNG: clients only show PNG icons.",
-                    icon.display()
-                ));
+                return Err(Error::Icon(icon.to_path_buf()));
             }
         }
         Ok(())
@@ -749,7 +821,7 @@ impl BundleSpec {
     /// A file used twice - the same icon as `icon` and as an `icons` entry - is
     /// written once. Two different files, or one file with two modes, would
     /// overwrite one another in the zip and are refused.
-    fn files(&self) -> Result<Vec<(String, &Path, u32)>, String> {
+    fn files(&self) -> Result<Vec<(String, &Path, u32)>, Error> {
         // TODO: single files under `server/` and at the bundle's root only. Nested
         // paths need a directory walk with `.mcpbignore` exclusions. See `TODO.md`.
         const EXECUTABLE: u32 = 0o755;
@@ -804,16 +876,16 @@ impl BundleSpec {
             match already {
                 Some((true, true)) => {}
                 Some(_) => {
-                    return Err(format!(
-                        "{} would overwrite {name}: two files of the bundle share a name.",
-                        file.display()
-                    ));
+                    return Err(Error::Clash {
+                        file: file.to_path_buf(),
+                        name,
+                    });
                 }
                 None if name == "manifest.json" => {
-                    return Err(format!(
-                        "{} would overwrite manifest.json: the bundle writes the manifest itself.",
-                        file.display()
-                    ));
+                    return Err(Error::Clash {
+                        file: file.to_path_buf(),
+                        name,
+                    });
                 }
                 None => unique.push((name, file, mode)),
             }
@@ -830,9 +902,8 @@ fn archive_name(path: &Path) -> Option<&str> {
 }
 
 /// The name a file of the bundle must be written under.
-fn name_of(path: &Path) -> Result<&str, String> {
-    archive_name(path)
-        .ok_or_else(|| format!("{path:?} needs a UTF-8 file name to be written into the bundle"))
+fn name_of(path: &Path) -> Result<&str, Error> {
+    archive_name(path).ok_or_else(|| Error::Name(path.to_path_buf()))
 }
 
 #[cfg(test)]
@@ -977,7 +1048,7 @@ mod tests {
         let bundle = dir.path().join("out.mcpb");
 
         let error = spec.pack(&bundle).unwrap_err();
-        assert!(error.contains("Can't read"), "{error}");
+        assert!(error.to_string().contains("can't read"), "{error}");
         assert!(!bundle.exists());
 
         // No temporary file either.
@@ -1014,7 +1085,7 @@ mod tests {
         // The same file as an executable would take the same name in the zip.
         spec.extra_executables.push(notice);
         let error = spec.pack(&bundle).unwrap_err();
-        assert!(error.contains("share a name"), "{error}");
+        assert!(error.to_string().contains("share a name"), "{error}");
     }
 
     #[test]
@@ -1391,10 +1462,12 @@ mod tests {
 
         let bundle = dir.path().join("out.mcpb");
         let error = spec.pack(&bundle).unwrap_err();
-        assert!(error.contains("can't be packed"), "{error}");
-        assert!(error.contains("ASCII letters"), "{error}");
-        assert!(error.contains("semantic version"), "{error}");
-        assert!(error.contains("${usre_config.project_dir}"), "{error}");
+        assert!(matches!(error, Error::Invalid(_)), "{error}");
+        let message = error.to_string();
+        assert!(message.contains("can't be packed"), "{message}");
+        assert!(message.contains("ASCII letters"), "{message}");
+        assert!(message.contains("semantic version"), "{message}");
+        assert!(message.contains("${usre_config.project_dir}"), "{message}");
         assert!(!bundle.exists());
     }
 
@@ -1415,7 +1488,8 @@ mod tests {
 
             let bundle = dir.path().join("out.mcpb");
             let error = spec.pack(&bundle).unwrap_err();
-            assert!(error.contains("not a PNG"), "{icon:?}: {error}");
+            assert!(matches!(error, Error::Icon(_)), "{icon:?}: {error}");
+            assert!(error.to_string().contains("not a PNG"), "{icon:?}: {error}");
             assert!(!bundle.exists());
         }
     }
@@ -1430,6 +1504,9 @@ mod tests {
         spec.icon = Some(png(dir.path(), "manifest.json"));
 
         let error = spec.pack(&dir.path().join("out.mcpb")).unwrap_err();
-        assert!(error.contains("would overwrite manifest.json"), "{error}");
+        assert!(
+            error.to_string().contains("would overwrite manifest.json"),
+            "{error}"
+        );
     }
 }
