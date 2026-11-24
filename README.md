@@ -13,7 +13,7 @@ cargo add mcpb
 ```rust,no_run
 use std::collections::BTreeMap;
 
-use mcpb::{Author, BundleSpec, DirectoryPrompt, Icon, Platform, Prompt};
+use mcpb::{Author, BundleSpec, Icon, Platform, Prompt, UserConfig};
 
 fn main() -> Result<(), String> {
     let spec = BundleSpec {
@@ -40,11 +40,15 @@ fn main() -> Result<(), String> {
             text: "Please review ${arguments.path}.".into(),
         }],
         localization: None,
-        directory: Some(DirectoryPrompt {
-            title: "Project directory".into(),
-            description: "The directory the server works in.".into(),
-        }),
-        args: vec!["--verbose".into()],
+        user_config: vec![UserConfig {
+            required: true,
+            ..UserConfig::directory(
+                "project_dir",
+                "Project directory",
+                "The directory the server works in.",
+            )
+        }],
+        args: vec!["--verbose".into(), "${user_config.project_dir}".into()],
         env: BTreeMap::from([("LOG_LEVEL".into(), "debug".into())]),
         platform_overrides: BTreeMap::new(),
         ..BundleSpec::default()
@@ -84,9 +88,9 @@ The manifest is written in version 0.3 (`MANIFEST_VERSION`) with the name, versi
 author (`name`, `email`, `url`) of the server; the metadata stores show (`long_description`,
 `repository`, `homepage`, `documentation`, `support`, `license`, `keywords`, `privacy_policies`,
 `_meta`); its icon(s) and screenshots; tools and prompts with their `_generated` flags; its
-`compatibility.platforms`; the directory it asks for at install; and `server.mcp_config`: the
-command (`${__dirname}/server/…`), the arguments, the environment (`env`), and the per-platform
-overrides.
+`compatibility.platforms`; what it asks the user for at install (`user_config`: text, numbers, tick
+boxes, directories and files); and `server.mcp_config`: the command (`${__dirname}/server/…`), the
+arguments, the environment (`env`), and the per-platform overrides.
 
 The first icon without a theme is also written as the manifest's plain `icon`, which clients that
 read only that field show. `platform_overrides` describes what the bundle's own platform runs
@@ -116,6 +120,9 @@ spec. It looks at the spec alone:
 - environment variables are named like environment variables
 - icon sizes read `WIDTHxHEIGHT`, and locale codes read like `en-US`
 - `platform_overrides` only names the bundle's own platform, the only one it can run on
+- every `user_config` entry has a key of ASCII letters, digits, `_`, `-` and `.` that is used once, a
+  title and a description, and a default that fits its type; `min` and `max` only bound a number,
+  and `min` is not above `max`
 
 `pack` additionally reads the files: an icon that is not a PNG is refused, since clients show
 nothing else, and so is a second, different file whose name is already taken in the zip.

@@ -20,10 +20,6 @@ const SERVER_DIR: &str = "server";
 /// Where clients look for the localized strings; the manifest points here.
 const RESOURCES_DIR: &str = "mcpb-resources";
 
-/// The [`BundleSpec::directory`] the manifest declares, which
-/// `${user_config.project_dir}` refers to.
-pub(crate) const PROJECT_DIR: &str = "project_dir";
-
 /// What the first bytes of a file must be to be a PNG.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -74,12 +70,154 @@ impl Platform {
     }
 }
 
-/// A server that asks the user for a directory when the bundle is installed
-/// and passes it as its first argument.
+/// What kind of value the client asks for in a [`UserConfig`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserConfigKind {
+    /// Text the user types.
+    String,
+    /// A number, which [`UserConfig::min`] and [`UserConfig::max`] bound.
+    Number,
+    /// A tick box.
+    Boolean,
+    /// A directory the user picks.
+    Directory,
+    /// A file the user picks.
+    File,
+}
+
+impl UserConfigKind {
+    /// As the manifest writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Boolean => "boolean",
+            Self::Directory => "directory",
+            Self::File => "file",
+        }
+    }
+}
+
+/// A value the client asks the user for at install.
+///
+/// The spec's `args` and `env` refer to it as `${user_config.<key>}`, which the
+/// client substitutes with what the user gave.
 #[derive(Clone, Debug)]
-pub struct DirectoryPrompt {
+pub struct UserConfig {
+    /// The name `${user_config.<key>}` refers to, such as `project_dir`.
+    pub key: String,
+    /// What kind of value the user gives.
+    pub kind: UserConfigKind,
+    /// Shown above the field.
     pub title: String,
+    /// Shown under the field.
     pub description: String,
+    /// Whether the client refuses to install without a value.
+    pub required: bool,
+    /// Whether clients hide what the user types, for secrets.
+    pub sensitive: bool,
+    /// Whether the user may give several values; they are passed as separate
+    /// arguments wherever `${user_config.<key>}` stands.
+    pub multiple: bool,
+    /// What the field starts with.
+    pub default: Option<Value>,
+    /// The smallest number [`UserConfigKind::Number`] takes.
+    pub min: Option<f64>,
+    /// The largest number [`UserConfigKind::Number`] takes.
+    pub max: Option<f64>,
+}
+
+impl UserConfig {
+    /// A directory the client asks for, such as the project the server works in.
+    pub fn directory(
+        key: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::new(key, UserConfigKind::Directory, title, description)
+    }
+
+    /// Text the user types.
+    pub fn string(
+        key: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::new(key, UserConfigKind::String, title, description)
+    }
+
+    /// A number the user types.
+    pub fn number(
+        key: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::new(key, UserConfigKind::Number, title, description)
+    }
+
+    /// A tick box.
+    pub fn boolean(
+        key: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::new(key, UserConfigKind::Boolean, title, description)
+    }
+
+    /// A file the user picks.
+    pub fn file(
+        key: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::new(key, UserConfigKind::File, title, description)
+    }
+
+    fn new(
+        key: impl Into<String>,
+        kind: UserConfigKind,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            kind,
+            title: title.into(),
+            description: description.into(),
+            required: false,
+            sensitive: false,
+            multiple: false,
+            default: None,
+            min: None,
+            max: None,
+        }
+    }
+
+    fn to_manifest(&self) -> Value {
+        let mut config = Map::new();
+        config.insert("type".to_string(), json!(self.kind.as_str()));
+        config.insert("title".to_string(), json!(self.title));
+        config.insert("description".to_string(), json!(self.description));
+        for (key, set) in [
+            ("required", self.required),
+            ("sensitive", self.sensitive),
+            ("multiple", self.multiple),
+        ] {
+            if set {
+                config.insert(key.to_string(), json!(true));
+            }
+        }
+        if let Some(default) = &self.default {
+            config.insert("default".to_string(), default.clone());
+        }
+        if let Some(min) = self.min {
+            config.insert("min".to_string(), json!(min));
+        }
+        if let Some(max) = self.max {
+            config.insert("max".to_string(), json!(max));
+        }
+        Value::Object(config)
+    }
 }
 
 /// An icon of the bundle, with the size clients should show it at.
@@ -283,10 +421,11 @@ pub struct BundleSpec {
     pub prompts_generated: bool,
     /// Translations of [`Self::description`] and the other fields clients show.
     pub localization: Option<Localization>,
-    /// Ask for a directory at install and pass it as the first argument.
-    pub directory: Option<DirectoryPrompt>,
-    /// Further arguments, before the directory. The client substitutes the
-    /// `${...}` variables in them.
+    /// What the client asks the user for at install, such as the project the
+    /// server works in. `args` and `env` refer to it as `${user_config.<key>}`.
+    pub user_config: Vec<UserConfig>,
+    /// Arguments for the server. The client substitutes the `${...}` variables
+    /// in them.
     pub args: Vec<String>,
     /// Environment variables of the server, which the client adds to its own.
     /// The `${...}` variables in the values are substituted.
@@ -330,7 +469,7 @@ impl Default for BundleSpec {
             prompts: Vec::new(),
             prompts_generated: false,
             localization: None,
-            directory: None,
+            user_config: Vec::new(),
             args: Vec::new(),
             env: BTreeMap::new(),
             platform_overrides: BTreeMap::new(),
@@ -447,18 +586,12 @@ impl BundleSpec {
             });
         }
 
-        // TODO: only a directory prompt exists. The spec also has `string` (with
-        // `sensitive`), `number`, `boolean` and `file` entries, each with `multiple` and
-        // `default`. See `TODO.md`.
-        if let Some(directory) = &self.directory {
-            manifest["user_config"] = json!({
-                PROJECT_DIR: {
-                    "type": "directory",
-                    "title": directory.title,
-                    "description": directory.description,
-                    "required": true,
-                },
-            });
+        if !self.user_config.is_empty() {
+            let mut config = Map::new();
+            for entry in &self.user_config {
+                config.insert(entry.key.clone(), entry.to_manifest());
+            }
+            manifest["user_config"] = Value::Object(config);
         }
 
         manifest
@@ -466,10 +599,7 @@ impl BundleSpec {
 
     /// What clients run and with which arguments (`server.mcp_config`).
     fn mcp_config(&self) -> Value {
-        let mut args: Vec<Value> = self.args.iter().map(|arg| json!(arg)).collect();
-        if self.directory.is_some() {
-            args.push(json!(format!("${{user_config.{PROJECT_DIR}}}")));
-        }
+        let args: Vec<Value> = self.args.iter().map(|arg| json!(arg)).collect();
 
         let mut config = Map::new();
         config.insert(
@@ -713,10 +843,12 @@ mod tests {
             platform,
             executable,
             tools: vec![("whoami".to_string(), "Who the caller is.".to_string())],
-            directory: Some(DirectoryPrompt {
-                title: "Project directory".to_string(),
-                description: "The directory the server works in.".to_string(),
-            }),
+            user_config: vec![UserConfig::directory(
+                "project_dir",
+                "Project directory",
+                "The directory the server works in.",
+            )],
+            args: vec!["${user_config.project_dir}".to_string()],
             ..BundleSpec::default()
         }
     }
@@ -870,17 +1002,82 @@ mod tests {
             "${__dirname}/server/config.json".to_string(),
         );
 
+        // The arguments are the spec's own, in its order: the directory the
+        // client asks for is passed where the spec puts `${user_config...}`.
         assert_eq!(
             spec.manifest()["server"]["mcp_config"],
             json!({
                 "command": "${__dirname}/server/test-server",
-                "args": ["--verbose", "${user_config.project_dir}"],
+                "args": ["${user_config.project_dir}", "--verbose"],
                 "env": {
                     "LOG_LEVEL": "debug",
                     "CONFIG": "${__dirname}/server/config.json",
                 },
             })
         );
+    }
+
+    #[test]
+    fn what_the_client_asks_the_user_is_written_as_declared() {
+        let mut spec = spec(Platform::Linux, "x".into());
+        spec.user_config = vec![
+            UserConfig::directory(
+                "project_dir",
+                "Project directory",
+                "The directory the server works in.",
+            ),
+            UserConfig {
+                required: true,
+                sensitive: true,
+                ..UserConfig::string("api_key", "API key", "The key the server sends.")
+            },
+            UserConfig {
+                min: Some(1.0),
+                max: Some(100.0),
+                default: Some(json!(10)),
+                ..UserConfig::number("limit", "Limit", "How many results.")
+            },
+            UserConfig {
+                default: Some(json!(true)),
+                ..UserConfig::boolean("read_only", "Read only", "Never write.")
+            },
+            UserConfig::file("config_file", "Config file", "The config to load."),
+        ];
+
+        let manifest = spec.manifest();
+        assert_eq!(
+            manifest["user_config"]["project_dir"],
+            json!({
+                "type": "directory",
+                "title": "Project directory",
+                "description": "The directory the server works in.",
+            })
+        );
+        assert_eq!(
+            manifest["user_config"]["api_key"],
+            json!({
+                "type": "string",
+                "title": "API key",
+                "description": "The key the server sends.",
+                "required": true,
+                "sensitive": true,
+            })
+        );
+        assert_eq!(
+            manifest["user_config"]["limit"],
+            json!({
+                "type": "number",
+                "title": "Limit",
+                "description": "How many results.",
+                "default": 10,
+                "min": 1.0,
+                "max": 100.0,
+            })
+        );
+        assert_eq!(manifest["user_config"]["read_only"]["type"], "boolean");
+        assert_eq!(manifest["user_config"]["config_file"]["type"], "file");
+
+        spec.validate().unwrap();
     }
 
     #[test]

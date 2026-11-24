@@ -37,10 +37,10 @@ last two are about the crate and its release.
   a bundle cannot hold the darwin, win32 and linux binaries and pick between them yet. Lifting that
   needs `platforms` as a list and one executable per platform. Per-CPU architecture still cannot be
   switched, so x64 and arm64 stay separate bundles unless the server is a universal macOS binary.
-- [ ] `user_config` entries other than a `directory`: `string` with `sensitive`, `number` with
-  `min`/`max`, `boolean`, `file`, and `multiple` / `default` on all of them. `DirectoryPrompt`
-  covers one fixed case; the general thing is a struct per entry, with the directory prompt as a
-  preset of it.
+- [x] `user_config` entries of every kind: `string` (with `sensitive`), `number` (with `min` and
+  `max`), `boolean`, `directory`, `file`, and `multiple` and `default` on all of them. `UserConfig`
+  has a constructor per kind, and `validate` checks that a default fits its type. This removed
+  `DirectoryPrompt` and the argument it appended: `args` now names `${user_config.<key>}` itself.
 
 ## Packaging
 

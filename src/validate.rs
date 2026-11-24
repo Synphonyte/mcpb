@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::{BundleSpec, PROJECT_DIR, Platform, PlatformConfig};
+use serde_json::Value;
+
+use crate::{BundleSpec, Platform, PlatformConfig, UserConfigKind};
 
 impl BundleSpec {
     /// Everything wrong with this spec, or `Ok` when a client would accept it.
@@ -94,12 +96,44 @@ impl BundleSpec {
         {
             problems.push("display_name is empty".to_string());
         }
-        if let Some(directory) = &self.directory {
-            if directory.title.trim().is_empty() {
-                problems.push("the directory prompt has no title".to_string());
+        let mut config_keys = HashSet::new();
+        for entry in &self.user_config {
+            if !is_config_key(&entry.key) {
+                problems.push(format!(
+                    "user_config key {:?} may only hold ASCII letters, digits, '_', '-' and '.'",
+                    entry.key
+                ));
+            } else if !config_keys.insert(entry.key.as_str()) {
+                problems.push(format!("two user_config entries are named {:?}", entry.key));
             }
-            if directory.description.trim().is_empty() {
-                problems.push("the directory prompt has no description".to_string());
+            if entry.title.trim().is_empty() {
+                problems.push(format!("user_config {:?} has no title", entry.key));
+            }
+            if entry.description.trim().is_empty() {
+                problems.push(format!("user_config {:?} has no description", entry.key));
+            }
+            if entry.kind != UserConfigKind::Number && (entry.min.is_some() || entry.max.is_some())
+            {
+                problems.push(format!(
+                    "user_config {:?} sets min or max, which only a number takes",
+                    entry.key
+                ));
+            }
+            if let (Some(min), Some(max)) = (entry.min, entry.max) {
+                if min > max {
+                    problems.push(format!(
+                        "user_config {:?} has min {min} above max {max}",
+                        entry.key
+                    ));
+                }
+            }
+            if let Some(default) = &entry.default {
+                if !default_fits(entry.kind, entry.multiple, default) {
+                    problems.push(format!(
+                        "user_config {:?} has a default that does not fit its type",
+                        entry.key
+                    ));
+                }
             }
         }
 
@@ -235,11 +269,10 @@ impl BundleSpec {
     /// What the manifest's `user_config` declares, which `${user_config.<key>}`
     /// may refer to.
     pub(crate) fn user_config_keys(&self) -> Vec<&str> {
-        let mut keys = Vec::new();
-        if self.directory.is_some() {
-            keys.push(PROJECT_DIR);
-        }
-        keys
+        self.user_config
+            .iter()
+            .map(|entry| entry.key.as_str())
+            .collect()
     }
 }
 
@@ -346,6 +379,35 @@ fn names<S: AsRef<str>>(names: &[S]) -> String {
     }
 }
 
+/// Whether the key can name a `user_config` entry and the variable that refers
+/// to it.
+fn is_config_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// Whether the default value fits the entry: one value of its type, or a list of
+/// them when several may be given.
+fn default_fits(kind: UserConfigKind, multiple: bool, default: &Value) -> bool {
+    let one_fits = |value: &Value| match kind {
+        UserConfigKind::String | UserConfigKind::Directory | UserConfigKind::File => {
+            value.is_string()
+        }
+        UserConfigKind::Number => value.is_number(),
+        UserConfigKind::Boolean => value.is_boolean(),
+    };
+
+    if multiple {
+        default
+            .as_array()
+            .is_some_and(|values| values.iter().all(one_fits))
+    } else {
+        one_fits(default)
+    }
+}
+
 /// Whether the text looks like a URL: a scheme and no whitespace.
 fn is_uri(value: &str) -> bool {
     !value.chars().any(char::is_whitespace)
@@ -417,7 +479,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Author, DirectoryPrompt, Icon, Localization, Prompt, Repository};
+    use crate::{Author, Icon, Localization, Prompt, Repository, UserConfig};
 
     fn spec() -> BundleSpec {
         BundleSpec {
@@ -428,10 +490,12 @@ mod tests {
             platform: Platform::Linux,
             executable: PathBuf::from("server-binary"),
             tools: vec![("whoami".to_string(), "Who the caller is.".to_string())],
-            directory: Some(DirectoryPrompt {
-                title: "Project directory".to_string(),
-                description: "The directory the server works in.".to_string(),
-            }),
+            user_config: vec![UserConfig::directory(
+                "project_dir",
+                "Project directory",
+                "The directory the server works in.",
+            )],
+            args: vec!["${user_config.project_dir}".to_string()],
             ..BundleSpec::default()
         }
     }
@@ -494,10 +558,11 @@ mod tests {
         spec.display_name = Some(String::new());
         spec.long_description = Some("\n".to_string());
         spec.license = Some(String::new());
-        spec.directory = Some(DirectoryPrompt {
+        spec.user_config = vec![UserConfig {
             title: String::new(),
             description: String::new(),
-        });
+            ..UserConfig::directory("project_dir", "Project directory", "Where it works.")
+        }];
 
         assert_eq!(
             problems(&spec),
@@ -507,8 +572,8 @@ mod tests {
                 "long_description is empty",
                 "license is empty",
                 "display_name is empty",
-                "the directory prompt has no title",
-                "the directory prompt has no description",
+                "user_config \"project_dir\" has no title",
+                "user_config \"project_dir\" has no description",
             ]
         );
     }
@@ -568,6 +633,56 @@ mod tests {
                 "_meta.de.synphonyte holds no object",
             ]
         );
+    }
+
+    #[test]
+    fn user_config_entries_have_to_fit_their_type() {
+        let mut spec = spec();
+        spec.user_config = vec![
+            UserConfig {
+                min: Some(1.0),
+                ..UserConfig::directory("project_dir", "Project", "Where it works.")
+            },
+            UserConfig {
+                key: "project dir".to_string(),
+                ..UserConfig::string("ignored", "Title", "Description")
+            },
+            UserConfig {
+                default: Some(json!("ten")),
+                ..UserConfig::number("limit", "Limit", "How many.")
+            },
+            UserConfig {
+                min: Some(100.0),
+                max: Some(1.0),
+                ..UserConfig::number("range", "Range", "Between.")
+            },
+            UserConfig {
+                default: Some(json!([1, 2])),
+                multiple: true,
+                ..UserConfig::string("tags", "Tags", "What it is about.")
+            },
+            UserConfig::boolean("project_dir", "Again", "A second entry with the same key."),
+        ];
+
+        assert_eq!(
+            problems(&spec),
+            [
+                "user_config \"project_dir\" sets min or max, which only a number takes",
+                "user_config key \"project dir\" may only hold ASCII letters, digits, '_', '-' and '.'",
+                "user_config \"limit\" has a default that does not fit its type",
+                "user_config \"range\" has min 100 above max 1",
+                "user_config \"tags\" has a default that does not fit its type",
+                "two user_config entries are named \"project_dir\"",
+            ]
+        );
+
+        spec.args.clear();
+        spec.user_config = vec![UserConfig {
+            multiple: true,
+            default: Some(json!(["a", "b"])),
+            ..UserConfig::string("tags", "Tags", "What it is about.")
+        }];
+        assert_eq!(spec.validate(), Ok(()));
     }
 
     #[test]

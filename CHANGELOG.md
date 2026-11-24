@@ -23,6 +23,9 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::tools_generated`, `BundleSpec::prompts_generated` and
   `BundleSpec::meta`, which writes `_meta` verbatim from a map of reverse-DNS
   namespaces to JSON objects.
+- `BundleSpec::user_config` (`UserConfig`: `key`, `kind`, `title`, `description`, `required`,
+  `sensitive`, `multiple`, `default`, `min`, `max`), with a constructor per `UserConfigKind`
+  (`string`, `number`, `boolean`, `directory`, `file`), written as the manifest's `user_config`.
 - `Default for BundleSpec`, so a spec spells only the fields it sets.
 - `BundleSpec::env`, written as `server.mcp_config.env`.
 - `BundleSpec::platform_overrides`, written as
@@ -47,9 +50,13 @@ All notable changes to this crate are documented here. It follows
   `meta`, `icon`, `icons`, `env`, `platform_overrides`, `prompts` and
   `localization`, and `author` is an `Author` rather than a `String`, so every
   spec literal needs updating - or `..BundleSpec::default()`.
+- **Breaking:** `directory` is gone in favour of `UserConfig::directory` in
+  `user_config`, and `pack` no longer appends it as an argument: `args` names
+  `${user_config.<key>}` where the spec wants it.
 - `validate` also refuses an author without a name, an email or a URL that does
   not look like one, an empty `long_description` or `license`, repeated
-  keywords, and a `_meta` namespace that holds no object.
+  keywords, a `_meta` namespace that holds no object, and a `user_config` entry
+  whose key, default, or `min` and `max` do not fit its type.
 - `pack` refuses a spec that `validate` rejects, and an icon that is not a PNG,
   before it writes anything.
 - A bundle file may no longer be named `manifest.json`, which used to clobber
