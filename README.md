@@ -13,7 +13,7 @@ cargo add mcpb
 ```rust,no_run
 use std::collections::BTreeMap;
 
-use mcpb::{BundleSpec, DirectoryPrompt, Icon, Platform, Prompt};
+use mcpb::{Author, BundleSpec, DirectoryPrompt, Icon, Platform, Prompt};
 
 fn main() -> Result<(), String> {
     let spec = BundleSpec {
@@ -21,7 +21,7 @@ fn main() -> Result<(), String> {
         display_name: None,
         version: "1.2.3".into(),
         description: "What the server does.".into(),
-        author: "Me".into(),
+        author: Author::new("Me"),
         platform: Platform::Darwin,
         executable: "target/release/my-server".into(),
         extra_executables: Vec::new(),
@@ -47,6 +47,7 @@ fn main() -> Result<(), String> {
         args: vec!["--verbose".into()],
         env: BTreeMap::from([("LOG_LEVEL".into(), "debug".into())]),
         platform_overrides: BTreeMap::new(),
+        ..BundleSpec::default()
     };
 
     spec.pack("dist/my-server-1.2.3-darwin-arm64.mcpb".as_ref())
@@ -58,6 +59,9 @@ system but not per CPU architecture, so each OS/architecture is its own bundle.
 `BundleSpec::file_name` names it the way the releases do. The crate needs Rust 1.85 or later, since
 it is edition 2024.
 
+Everything but the name, the version, the description, the author, the platform and the executable
+has a default, so `..BundleSpec::default()` keeps a spec to what it says.
+
 Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation on
 [docs.rs](https://docs.rs/mcpb); before 1.0 the API is not stable.
 
@@ -67,6 +71,7 @@ Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation
 my-server-1.2.3-darwin-arm64.mcpb
 ├── manifest.json                  # written from the spec
 ├── icon.png                       # `icon`, at the root, where clients look for it
+├── screenshot.png                 # `screenshots`, likewise
 ├── server/
 │   ├── my-server                  # `executable`, mode 755
 │   ├── helper                     # `extra_executables`, mode 755
@@ -76,9 +81,12 @@ my-server-1.2.3-darwin-arm64.mcpb
 ```
 
 The manifest is written in version 0.3 (`MANIFEST_VERSION`) with the name, version, description and
-author of the server, its icon(s), tools and prompts, its `compatibility.platforms`, the directory
-it asks for at install, and `server.mcp_config`: the command (`${__dirname}/server/…`), the
-arguments, the environment (`env`), and the per-platform overrides.
+author (`name`, `email`, `url`) of the server; the metadata stores show (`long_description`,
+`repository`, `homepage`, `documentation`, `support`, `license`, `keywords`, `privacy_policies`,
+`_meta`); its icon(s) and screenshots; tools and prompts with their `_generated` flags; its
+`compatibility.platforms`; the directory it asks for at install; and `server.mcp_config`: the
+command (`${__dirname}/server/…`), the arguments, the environment (`env`), and the per-platform
+overrides.
 
 The first icon without a theme is also written as the manifest's plain `icon`, which clients that
 read only that field show. `platform_overrides` describes what the bundle's own platform runs
@@ -98,7 +106,10 @@ spec. It looks at the spec alone:
 - the version is a semantic version
 - description, author and the directory prompt say something, and so do every tool's description
   and every prompt's text
-- a tool, a prompt and a prompt's arguments are each named once
+- the author's email and the URLs (`author.url`, `homepage`, `documentation`, `support`,
+  `repository.url`, `privacy_policies`) look like what they claim
+- a tool, a prompt and a prompt's arguments are each named once, as is every keyword, and a `_meta`
+  namespace holds an object
 - `args` and `env` only use the variables clients substitute: `${__dirname}`, `${HOME}`,
   `${DOCUMENTS}`, `${DOWNLOADS}`, `${DESKTOP}`, `${pathSeparator}`, `${/}`, and
   `${user_config.<key>}` of a key the manifest declares

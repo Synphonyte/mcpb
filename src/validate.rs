@@ -28,8 +28,64 @@ impl BundleSpec {
         if self.description.trim().is_empty() {
             problems.push("description is empty".to_string());
         }
-        if self.author.trim().is_empty() {
-            problems.push("author is empty".to_string());
+        if self.author.name.trim().is_empty() {
+            problems.push("the author has no name".to_string());
+        }
+        if let Some(email) = &self.author.email {
+            if !is_email(email) {
+                problems.push(format!("author email {email:?} is not an email address"));
+            }
+        }
+        if let Some(url) = &self.author.url {
+            if !is_uri(url) {
+                problems.push(format!("author url {url:?} is not a URL"));
+            }
+        }
+        if self
+            .long_description
+            .as_deref()
+            .is_some_and(|text| text.trim().is_empty())
+        {
+            problems.push("long_description is empty".to_string());
+        }
+        if let Some(repository) = &self.repository {
+            if repository.kind.trim().is_empty() {
+                problems.push("the repository has no type, such as \"git\"".to_string());
+            }
+            if !is_uri(&repository.url) {
+                problems.push(format!("repository url {:?} is not a URL", repository.url));
+            }
+        }
+        for (what, url) in [
+            ("homepage", &self.homepage),
+            ("documentation", &self.documentation),
+            ("support", &self.support),
+        ] {
+            if let Some(url) = url.as_ref().filter(|url| !is_uri(url)) {
+                problems.push(format!("{what} {url:?} is not a URL"));
+            }
+        }
+        if self
+            .license
+            .as_deref()
+            .is_some_and(|license| license.trim().is_empty())
+        {
+            problems.push("license is empty".to_string());
+        }
+        let mut keyword_names = HashSet::new();
+        for keyword in &self.keywords {
+            if keyword.trim().is_empty() {
+                problems.push("a keyword is empty".to_string());
+            } else if !keyword_names.insert(keyword.as_str()) {
+                problems.push(format!("two keywords are {keyword:?}"));
+            }
+        }
+        for policy in &self.privacy_policies {
+            if !is_uri(policy) {
+                problems.push(format!(
+                    "privacy_policies has {policy:?}, which is not a URL"
+                ));
+            }
         }
         if self
             .display_name
@@ -135,6 +191,15 @@ impl BundleSpec {
                         "locale {locale:?} is not a language code such as \"de-DE\""
                     ));
                 }
+            }
+        }
+
+        for (namespace, metadata) in &self.meta {
+            if namespace.trim().is_empty() {
+                problems.push("a _meta namespace is empty".to_string());
+            }
+            if !metadata.is_object() {
+                problems.push(format!("_meta.{namespace} holds no object"));
             }
         }
 
@@ -281,6 +346,27 @@ fn names<S: AsRef<str>>(names: &[S]) -> String {
     }
 }
 
+/// Whether the text looks like a URL: a scheme and no whitespace.
+fn is_uri(value: &str) -> bool {
+    !value.chars().any(char::is_whitespace)
+        && value
+            .split_once(':')
+            .is_some_and(|(scheme, rest)| !scheme.is_empty() && !rest.is_empty())
+}
+
+/// Whether the text looks like an email address.
+fn is_email(value: &str) -> bool {
+    match value.split_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty()
+                && !domain.is_empty()
+                && !domain.contains('@')
+                && !value.chars().any(char::is_whitespace)
+        }
+        None => false,
+    }
+}
+
 /// Whether the name can be a bundle's, an executable's and a file name's own.
 fn is_name(name: &str) -> bool {
     // `.` and `..` name directories, not files.
@@ -328,32 +414,25 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use serde_json::json;
+
     use super::*;
-    use crate::{DirectoryPrompt, Icon, Localization, Prompt};
+    use crate::{Author, DirectoryPrompt, Icon, Localization, Prompt, Repository};
 
     fn spec() -> BundleSpec {
         BundleSpec {
             name: "test-server".to_string(),
-            display_name: None,
             version: "1.2.3".to_string(),
             description: "A test server.".to_string(),
-            author: "Test".to_string(),
+            author: Author::new("Test"),
             platform: Platform::Linux,
             executable: PathBuf::from("server-binary"),
-            extra_executables: Vec::new(),
-            resources: Vec::new(),
-            icon: None,
-            icons: Vec::new(),
             tools: vec![("whoami".to_string(), "Who the caller is.".to_string())],
-            prompts: Vec::new(),
-            localization: None,
             directory: Some(DirectoryPrompt {
                 title: "Project directory".to_string(),
                 description: "The directory the server works in.".to_string(),
             }),
-            args: Vec::new(),
-            env: BTreeMap::new(),
-            platform_overrides: BTreeMap::new(),
+            ..BundleSpec::default()
         }
     }
 
@@ -411,8 +490,10 @@ mod tests {
     fn what_clients_show_has_to_say_something() {
         let mut spec = spec();
         spec.description = " ".to_string();
-        spec.author = String::new();
+        spec.author = Author::default();
         spec.display_name = Some(String::new());
+        spec.long_description = Some("\n".to_string());
+        spec.license = Some(String::new());
         spec.directory = Some(DirectoryPrompt {
             title: String::new(),
             description: String::new(),
@@ -422,10 +503,69 @@ mod tests {
             problems(&spec),
             [
                 "description is empty",
-                "author is empty",
+                "the author has no name",
+                "long_description is empty",
+                "license is empty",
                 "display_name is empty",
                 "the directory prompt has no title",
                 "the directory prompt has no description",
+            ]
+        );
+    }
+
+    #[test]
+    fn links_and_the_author_have_to_look_like_what_they_claim() {
+        let mut spec = spec();
+        spec.author.email = Some("maccesch.synphonyte.com".to_string());
+        spec.author.url = Some("https://synphonyte.com".to_string());
+        spec.repository = Some(Repository {
+            kind: String::new(),
+            url: "github.com/Synphonyte/mcpb".to_string(),
+        });
+        spec.homepage = Some("https://synphonyte.com/mcpb".to_string());
+        spec.documentation = Some("https://docs.rs/mcpb".to_string());
+        spec.support = Some("mailto:hello@synphonyte.com".to_string());
+        spec.privacy_policies = vec![
+            "https://synphonyte.com/privacy".to_string(),
+            "nope".to_string(),
+        ];
+
+        assert_eq!(
+            problems(&spec),
+            [
+                "author email \"maccesch.synphonyte.com\" is not an email address",
+                "the repository has no type, such as \"git\"",
+                "repository url \"github.com/Synphonyte/mcpb\" is not a URL",
+                "privacy_policies has \"nope\", which is not a URL",
+            ]
+        );
+
+        spec.author.email = Some("maccesch@synphonyte.com".to_string());
+        spec.repository = Some(Repository::git("https://github.com/Synphonyte/mcpb"));
+        spec.privacy_policies = vec!["https://synphonyte.com/privacy".to_string()];
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn keywords_and_meta_are_read_once() {
+        let mut spec = spec();
+        spec.keywords = vec!["mcp".to_string(), "mcp".to_string(), String::new()];
+        spec.meta = serde_json::Map::from_iter([
+            (
+                "com.microsoft.windows".to_string(),
+                json!({ "package_family_name": "Mcpb" }),
+            ),
+            (String::new(), json!({})),
+            ("de.synphonyte".to_string(), json!("not an object")),
+        ]);
+
+        assert_eq!(
+            problems(&spec),
+            [
+                "two keywords are \"mcp\"",
+                "a keyword is empty",
+                "a _meta namespace is empty",
+                "_meta.de.synphonyte holds no object",
             ]
         );
     }

@@ -151,7 +151,80 @@ impl PlatformConfig {
     }
 }
 
+/// Who made the server (`author` in the manifest).
+#[derive(Clone, Debug, Default)]
+pub struct Author {
+    /// The person or organisation, as clients show it.
+    pub name: String,
+    /// Where to reach them.
+    pub email: Option<String>,
+    /// Their website.
+    pub url: Option<String>,
+}
+
+impl Author {
+    /// An author with a name and nothing else.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            email: None,
+            url: None,
+        }
+    }
+
+    fn to_manifest(&self) -> Value {
+        let mut author = json!({ "name": self.name });
+        if let Some(email) = &self.email {
+            author["email"] = json!(email);
+        }
+        if let Some(url) = &self.url {
+            author["url"] = json!(url);
+        }
+        author
+    }
+}
+
+/// Where the server's source lives (`repository` in the manifest).
+#[derive(Clone, Debug)]
+pub struct Repository {
+    /// The kind of repository, such as `git`.
+    pub kind: String,
+    /// Where it is cloned from.
+    pub url: String,
+}
+
+impl Repository {
+    /// A `git` repository at `url`.
+    pub fn git(url: impl Into<String>) -> Self {
+        Self {
+            kind: "git".to_string(),
+            url: url.into(),
+        }
+    }
+
+    fn to_manifest(&self) -> Value {
+        json!({ "type": self.kind, "url": self.url })
+    }
+}
+
 /// What goes into a bundle.
+///
+/// Every field but the name, the version, the description, the author, the
+/// platform and the executable can be left at [`Default::default`], so a spec
+/// is usually built with a struct update:
+///
+/// ```
+/// # use mcpb::{Author, BundleSpec, Platform};
+/// let spec = BundleSpec {
+///     name: "my-server".into(),
+///     version: "1.2.3".into(),
+///     description: "What the server does.".into(),
+///     author: Author::new("Me"),
+///     executable: "target/release/my-server".into(),
+///     ..BundleSpec::default()
+/// };
+/// # let _ = spec;
+/// ```
 #[derive(Clone, Debug)]
 pub struct BundleSpec {
     /// The bundle's and the executable's name, such as `lyte-admin-build-mcp`.
@@ -160,8 +233,28 @@ pub struct BundleSpec {
     pub display_name: Option<String>,
     /// A semantic version.
     pub version: String,
+    /// What the server does, in a sentence.
     pub description: String,
-    pub author: String,
+    /// A longer description for extension stores, in markdown.
+    pub long_description: Option<String>,
+    /// Who made the server.
+    pub author: Author,
+    /// Where the server's source lives.
+    pub repository: Option<Repository>,
+    /// The server's website.
+    pub homepage: Option<String>,
+    /// Where the server is documented.
+    pub documentation: Option<String>,
+    /// Where users report problems with it.
+    pub support: Option<String>,
+    /// The licence, as an identifier such as `MIT`.
+    pub license: Option<String>,
+    /// What the server is about, for stores that search.
+    pub keywords: Vec<String>,
+    /// The privacy policies of the services the server talks to.
+    pub privacy_policies: Vec<String>,
+    /// The platform the bundle's binary is for. The bundle's platform by
+    /// default.
     pub platform: Platform,
     /// The compiled server for [`Self::platform`].
     pub executable: PathBuf,
@@ -177,10 +270,17 @@ pub struct BundleSpec {
     /// also written as the manifest's `icon`, so clients that only read that
     /// field show an icon as well.
     pub icons: Vec<Icon>,
+    /// What the extension looks like, written to the root of the bundle under
+    /// their own file names.
+    pub screenshots: Vec<PathBuf>,
     /// Shown to the user before install: name and description of each tool.
     pub tools: Vec<(String, String)>,
+    /// Whether the server adds tools of its own at run time.
+    pub tools_generated: bool,
     /// Prompts the clients list next to the tools.
     pub prompts: Vec<Prompt>,
+    /// Whether the server adds prompts of its own at run time.
+    pub prompts_generated: bool,
     /// Translations of [`Self::description`] and the other fields clients show.
     pub localization: Option<Localization>,
     /// Ask for a directory at install and pass it as the first argument.
@@ -193,6 +293,50 @@ pub struct BundleSpec {
     pub env: BTreeMap<String, String>,
     /// What [`Self::platform`] runs instead of [`Self::args`] and [`Self::env`].
     pub platform_overrides: BTreeMap<Platform, PlatformConfig>,
+    /// Platform metadata written verbatim (`_meta`), by reverse-DNS namespace,
+    /// each namespace holding an object: such as Windows' `package_family_name`
+    /// or a macOS bundle identifier.
+    pub meta: Map<String, Value>,
+}
+
+impl Default for BundleSpec {
+    /// A spec that still has to be filled in: the empty name, version and
+    /// description, this platform and no executable are what
+    /// [`BundleSpec::validate`] refuses.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            display_name: None,
+            version: String::new(),
+            description: String::new(),
+            long_description: None,
+            author: Author::default(),
+            repository: None,
+            homepage: None,
+            documentation: None,
+            support: None,
+            license: None,
+            keywords: Vec::new(),
+            privacy_policies: Vec::new(),
+            platform: Platform::host(),
+            executable: PathBuf::new(),
+            extra_executables: Vec::new(),
+            resources: Vec::new(),
+            icon: None,
+            icons: Vec::new(),
+            screenshots: Vec::new(),
+            tools: Vec::new(),
+            tools_generated: false,
+            prompts: Vec::new(),
+            prompts_generated: false,
+            localization: None,
+            directory: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            platform_overrides: BTreeMap::new(),
+            meta: Map::new(),
+        }
+    }
 }
 
 impl Icon {
@@ -228,16 +372,13 @@ impl BundleSpec {
 
     /// The `manifest.json`.
     pub fn manifest(&self) -> Value {
-        // TODO: `long_description`, `repository`, `keywords`, `license`,
-        // `screenshots`, `tools_generated` and `_meta` are not written yet. See
-        // `TODO.md`.
         let mut manifest = json!({
             "manifest_version": MANIFEST_VERSION,
             "name": self.name,
             "display_name": self.display_name.as_deref().unwrap_or(&self.name),
             "version": self.version,
             "description": self.description,
-            "author": { "name": self.author },
+            "author": self.author.to_manifest(),
             "server": {
                 "type": "binary",
                 "entry_point": self.entry_point(),
@@ -251,12 +392,49 @@ impl BundleSpec {
             "compatibility": { "platforms": [self.platform.as_str()] },
         });
 
+        for (key, value) in [
+            ("long_description", &self.long_description),
+            ("homepage", &self.homepage),
+            ("documentation", &self.documentation),
+            ("support", &self.support),
+            ("license", &self.license),
+        ] {
+            if let Some(value) = value {
+                manifest[key] = json!(value);
+            }
+        }
+        if let Some(repository) = &self.repository {
+            manifest["repository"] = repository.to_manifest();
+        }
+        if !self.keywords.is_empty() {
+            manifest["keywords"] = json!(self.keywords);
+        }
+        if !self.privacy_policies.is_empty() {
+            manifest["privacy_policies"] = json!(self.privacy_policies);
+        }
+        if self.tools_generated {
+            manifest["tools_generated"] = json!(true);
+        }
+        if self.prompts_generated {
+            manifest["prompts_generated"] = json!(true);
+        }
+        if !self.meta.is_empty() {
+            manifest["_meta"] = Value::Object(self.meta.clone());
+        }
         if let Some(icon) = self.manifest_icon() {
             manifest["icon"] = json!(icon);
         }
         if !self.icons.is_empty() {
             manifest["icons"] =
                 Value::Array(self.icons.iter().filter_map(Icon::to_manifest).collect());
+        }
+        if !self.screenshots.is_empty() {
+            manifest["screenshots"] = Value::Array(
+                self.screenshots
+                    .iter()
+                    .filter_map(|path| archive_name(path).map(|name| json!(name)))
+                    .collect(),
+            );
         }
         if !self.prompts.is_empty() {
             manifest["prompts"] =
@@ -457,9 +635,17 @@ impl BundleSpec {
             }
         }
 
-        // Icons and translations keep the places the manifest points at.
+        // Icons, screenshots and translations keep the places the manifest
+        // points at.
         for icon in self.icon_files() {
             files.push((name_of(icon)?.to_string(), icon, PLAIN));
+        }
+        for screenshot in &self.screenshots {
+            files.push((
+                name_of(screenshot)?.to_string(),
+                screenshot.as_path(),
+                PLAIN,
+            ));
         }
         if let Some(localization) = &self.localization {
             for (locale, path) in &localization.locales {
@@ -521,26 +707,17 @@ mod tests {
     fn spec(platform: Platform, executable: PathBuf) -> BundleSpec {
         BundleSpec {
             name: "test-server".to_string(),
-            display_name: None,
             version: "1.2.3".to_string(),
             description: "A test server.".to_string(),
-            author: "Test".to_string(),
+            author: Author::new("Test"),
             platform,
             executable,
-            extra_executables: Vec::new(),
-            resources: Vec::new(),
-            icon: None,
-            icons: Vec::new(),
             tools: vec![("whoami".to_string(), "Who the caller is.".to_string())],
-            prompts: Vec::new(),
-            localization: None,
             directory: Some(DirectoryPrompt {
                 title: "Project directory".to_string(),
                 description: "The directory the server works in.".to_string(),
             }),
-            args: Vec::new(),
-            env: BTreeMap::new(),
-            platform_overrides: BTreeMap::new(),
+            ..BundleSpec::default()
         }
     }
 
@@ -891,6 +1068,84 @@ mod tests {
             .read_to_string(&mut german)
             .unwrap();
         assert_eq!(german, r#"{ "description": "Ein Testserver." }"#);
+    }
+
+    #[test]
+    fn the_manifest_carries_what_stores_show() {
+        let mut spec = spec(Platform::Linux, "x".into());
+        spec.display_name = Some("Test Server".to_string());
+        spec.long_description = Some("A longer text.".to_string());
+        spec.author = Author {
+            name: "Test".to_string(),
+            email: Some("test@example.com".to_string()),
+            url: Some("https://example.com".to_string()),
+        };
+        spec.repository = Some(Repository::git("https://github.com/Synphonyte/mcpb"));
+        spec.homepage = Some("https://example.com".to_string());
+        spec.documentation = Some("https://docs.example.com".to_string());
+        spec.support = Some("https://example.com/issues".to_string());
+        spec.license = Some("MIT".to_string());
+        spec.keywords = vec!["mcp".to_string()];
+        spec.privacy_policies = vec!["https://example.com/privacy".to_string()];
+        spec.tools_generated = true;
+        spec.prompts_generated = true;
+        spec.meta = Map::from_iter([(
+            "com.microsoft.windows".to_string(),
+            json!({ "package_family_name": "Mcpb" }),
+        )]);
+
+        let manifest = spec.manifest();
+        assert_eq!(manifest["display_name"], "Test Server");
+        assert_eq!(manifest["long_description"], "A longer text.");
+        assert_eq!(
+            manifest["author"],
+            json!({
+                "name": "Test",
+                "email": "test@example.com",
+                "url": "https://example.com",
+            })
+        );
+        assert_eq!(
+            manifest["repository"],
+            json!({ "type": "git", "url": "https://github.com/Synphonyte/mcpb" })
+        );
+        assert_eq!(manifest["homepage"], "https://example.com");
+        assert_eq!(manifest["documentation"], "https://docs.example.com");
+        assert_eq!(manifest["support"], "https://example.com/issues");
+        assert_eq!(manifest["license"], "MIT");
+        assert_eq!(manifest["keywords"], json!(["mcp"]));
+        assert_eq!(
+            manifest["privacy_policies"],
+            json!(["https://example.com/privacy"])
+        );
+        assert_eq!(manifest["tools_generated"], true);
+        assert_eq!(manifest["prompts_generated"], true);
+        assert_eq!(
+            manifest["_meta"]["com.microsoft.windows"]["package_family_name"],
+            "Mcpb"
+        );
+
+        spec.validate().unwrap();
+    }
+
+    #[test]
+    fn screenshots_are_packed_at_the_root_of_the_bundle() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let screenshot = dir.path().join("shot.png");
+        fs::write(&screenshot, b"whatever a screenshot is").unwrap();
+
+        let mut spec = spec(Platform::Linux, binary);
+        spec.screenshots = vec![screenshot];
+
+        assert_eq!(spec.manifest()["screenshots"], json!(["shot.png"]));
+
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+
+        let mut zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
+        assert!(zip.by_name("shot.png").is_ok());
     }
 
     #[test]

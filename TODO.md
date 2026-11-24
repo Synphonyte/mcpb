@@ -9,25 +9,25 @@ last two are about the crate and its release.
 
 ## Manifest fields
 
-- [ ] `author.email` and `author.url`.
-- [ ] `long_description`, `homepage`, `documentation`, `support`, `repository`, `license`,
-  `keywords`, `privacy_policies`. Nothing new to model here: fields on `BundleSpec` and keys in
-  `BundleSpec::manifest`.
-- [ ] `tools_generated` and `prompts_generated`.
+- [x] `author.email` and `author.url`. `author` is an `Author` now, with the name it requires.
+- [x] `long_description`, `homepage`, `documentation`, `support`, `repository`, `license`,
+  `keywords`, `privacy_policies`, as fields on `BundleSpec` and keys in `BundleSpec::manifest`.
+- [x] `tools_generated` and `prompts_generated`.
 - [x] `prompts`: a prompt is more than the `(name, description)` pair `tools` gets away with, so it
   carries argument names and `text` with `${arguments.<name>}` placeholders, and `validate` refuses
   a prompt whose text uses an argument it does not declare.
 - [x] `icons` (array of `src`, `size` as `WIDTHxHEIGHT`, `theme` for light/dark) and the legacy
   single `icon`. The files are written to the bundle's root under their own names, which is where
   the manifest points; the first icon without a theme is also written as the plain `icon`.
-- [ ] `screenshots`.
+- [x] `screenshots`, written to the bundle's root under their own names like the icons. A nested
+  path in the manifest needs the directory walk below.
 - [x] `localization`: `default_locale` and the per-locale files in the bundle. `resources` is fixed
   to `mcpb-resources/${locale}.json`; a path of the caller's choosing would need a field.
-- [ ] `_meta`, at least as raw JSON to insert verbatim: Windows `package_family_name` and static
-  responses, macOS bundle identifiers. Bundles for those stores cannot be built without it.
-- [ ] `manifest_version` is the constant `MANIFEST_VERSION` `0.3`, so a 0.4 manifest (the `uv`
-  server type and whatever else 0.4 adds) cannot be written at all. Decide whether
-  `BundleSpec` carries the version it writes.
+- [x] `_meta` as raw JSON: `BundleSpec::meta`, a map from reverse-DNS namespace to the object the
+  manifest writes, which `validate` checks is an object.
+- [x] `manifest_version` stays the constant `MANIFEST_VERSION` `0.3`. 0.4 adds the `uv` server type
+  and nothing a binary bundle can use; a `BundleSpec` carrying the version is for whenever a field
+  shows up that only 0.4 has.
 
 ## `server.mcp_config` and `user_config`
 
@@ -75,8 +75,8 @@ last two are about the crate and its release.
 
 - [ ] An error type instead of `String` in every `Result` — callers cannot match on a message,
   and `?` into their own error type needs a conversion.
-- [ ] `BundleSpec` ergonomics: `Default`, or a builder, so callers do not spell every field. The
-  struct will only grow as the manifest fields above land.
+- [x] `BundleSpec` ergonomics: `Default` and `..BundleSpec::default()`, so callers spell only what
+  they set. A builder is not needed while the fields are public and the struct is plain data.
 - [ ] Typed where the spec constrains the string: `version` should be a semver type, and
   `BundleSpec::file_name` takes `arch: &str` that nothing checks. `Platform::parse` accepts
   `macos` and `windows` while `Platform::as_str` writes the spec's spelling — decide whether that

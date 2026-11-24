@@ -16,6 +16,14 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::icon` and `BundleSpec::icons`: PNG icons, written to the root of
   the bundle. The first icon without a theme is also written as the manifest's
   plain `icon`, and one file used as both is written once.
+- `BundleSpec::screenshots`, written to the root of the bundle next to the icons.
+- `Author` (`name`, `email`, `url`) and `Repository` (`kind`, `url`), and the
+  metadata stores show: `long_description`, `homepage`, `documentation`,
+  `support`, `license`, `keywords` and `privacy_policies`.
+- `BundleSpec::tools_generated`, `BundleSpec::prompts_generated` and
+  `BundleSpec::meta`, which writes `_meta` verbatim from a map of reverse-DNS
+  namespaces to JSON objects.
+- `Default for BundleSpec`, so a spec spells only the fields it sets.
 - `BundleSpec::env`, written as `server.mcp_config.env`.
 - `BundleSpec::platform_overrides`, written as
   `server.mcp_config.platform_overrides` (`PlatformConfig`: `command`, `args`,
@@ -33,9 +41,15 @@ All notable changes to this crate are documented here. It follows
 
 ### Changed
 
-- **Breaking:** `BundleSpec` gained the fields `icon`, `icons`, `env`,
-  `platform_overrides`, `prompts` and `localization`, so every spec literal
-  needs them.
+- **Breaking:** `BundleSpec` has the new fields `long_description`, `repository`,
+  `homepage`, `documentation`, `support`, `license`, `keywords`,
+  `privacy_policies`, `screenshots`, `tools_generated`, `prompts_generated`,
+  `meta`, `icon`, `icons`, `env`, `platform_overrides`, `prompts` and
+  `localization`, and `author` is an `Author` rather than a `String`, so every
+  spec literal needs updating - or `..BundleSpec::default()`.
+- `validate` also refuses an author without a name, an email or a URL that does
+  not look like one, an empty `long_description` or `license`, repeated
+  keywords, and a `_meta` namespace that holds no object.
 - `pack` refuses a spec that `validate` rejects, and an icon that is not a PNG,
   before it writes anything.
 - A bundle file may no longer be named `manifest.json`, which used to clobber
