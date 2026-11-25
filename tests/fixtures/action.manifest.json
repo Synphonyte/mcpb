@@ -1,0 +1,21 @@
+{
+  "manifest_version": "0.3",
+  "name": "action-test",
+  "version": "1.0.0",
+  "description": "What CI packs with the GitHub Action on each platform.",
+  "author": {
+    "name": "Synphonyte"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server/pack",
+    "mcp_config": {
+      "command": "${__dirname}/server/pack",
+      "args": [],
+      "env": {}
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"]
+  }
+}

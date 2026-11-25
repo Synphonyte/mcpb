@@ -12,7 +12,7 @@ cargo binstall mcpb           # as a command, prebuilt
 cargo install --locked mcpb   # as a command, compiled
 ```
 
-Starting a new server? [`template/`](https://github.com/Synphonyte/mcpb/tree/main/template) is a
+Starting a new server? [`mcpb-template`](https://github.com/Synphonyte/mcpb-template) is a
 minimal [`rmcp`](https://crates.io/crates/rmcp) server whose release workflow attaches a bundle
 for each platform to every GitHub release. Already have one? The [GitHub Action](#github-action)
 packs it in your own workflow.
@@ -146,7 +146,7 @@ jobs:
 
 The outputs are `bundle`, the bundle's path, and `name`, its file name. The action downloads the
 `mcpb` binary of its own release, and builds it with cargo where there is none. The template's
-[release workflow](https://github.com/Synphonyte/mcpb/blob/main/template/.github/workflows/release.yml)
+[release workflow](https://github.com/Synphonyte/mcpb-template/blob/main/.github/workflows/release.yml)
 shows the whole thing: six targets, then one GitHub release with every bundle.
 
 ## Bundle layout

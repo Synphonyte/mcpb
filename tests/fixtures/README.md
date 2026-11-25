@@ -17,3 +17,9 @@ for the same manifest one version later.
 
 The `.mcpbignore` is the example's own exclusion list, which the directory-tree
 tests use as a real-world ignore file.
+
+# The action's bundle
+
+`action.manifest.json` is ours: the manifest the CI `action` job packs with the
+GitHub Action, the `pack` example standing in for a server. It names every
+platform, so each runner can pack it for its own.

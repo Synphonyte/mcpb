@@ -16,8 +16,9 @@ All notable changes to this crate are documented here. It follows
   the spec.
 - A GitHub Action, `uses: Synphonyte/mcpb@v0`, that packs and checks the bundle
   for the runner's platform.
-- `template/`: a minimal `rmcp` server whose release workflow attaches a bundle
-  for each platform to a GitHub release.
+- The [mcpb-template](https://github.com/Synphonyte/mcpb-template) repository
+  is linked from the README: a minimal `rmcp` server whose release workflow
+  attaches a bundle for each platform to a GitHub release.
 - Releases attach prebuilt `mcpb` binaries for macOS, Linux and Windows on x64
   and arm64, so `cargo binstall mcpb` installs without compiling.
 
