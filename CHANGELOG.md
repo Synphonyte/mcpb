@@ -4,6 +4,24 @@ All notable changes to this crate are documented here. It follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `mcpb pack --platform <platform>` packs one of the platforms a manifest lists,
+  dropping the others and their overrides, as a build for one OS needs.
+- `mcpb pack --executable <file>` packs a binary from where cargo built it,
+  such as `target/release/my-server`, as the entry point.
+- `mcpb pack -o <directory>` writes the bundle into the directory, named after
+  the spec.
+- A GitHub Action, `uses: Synphonyte/mcpb@v0`, that packs and checks the bundle
+  for the runner's platform.
+- The [mcpb-template](https://github.com/Synphonyte/mcpb-template) repository
+  is linked from the README: a minimal `rmcp` server whose release workflow
+  attaches a bundle for each platform to a GitHub release.
+- Releases attach prebuilt `mcpb` binaries for macOS, Linux and Windows on x64
+  and arm64, so `cargo binstall mcpb` installs without compiling.
+
 ## 0.2.1 - 2026-11-25
 
 ### Added

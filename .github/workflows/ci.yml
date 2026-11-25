@@ -168,3 +168,37 @@ jobs:
             npx -y @anthropic-ai/mcpb@latest unpack "$bundle" "unpacked-$name"
             npx -y @anthropic-ai/mcpb@latest validate "unpacked-$name"
           done
+  # The GitHub Action, as a user's workflow runs it: a binary built for the
+  # runner, packed for its OS and CPU. The action is built from this checkout,
+  # not downloaded, so it tests this change. Windows shows the action finds the
+  # `.exe` behind a path without one.
+  action:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --example pack
+
+      - uses: ./
+        id: mcpb
+        with:
+          manifest: tests/fixtures/action.manifest.json
+          executable: target/debug/examples/pack
+          out: target/bundles/
+          mcpb-version: source
+
+      - name: Check the bundle with the official CLI
+        shell: bash
+        run: |
+          bundle="${{ steps.mcpb.outputs.bundle }}"
+          case "$bundle" in
+            *-linux-*|*-darwin-*|*-win32-*) ;;
+            *) echo "::error::$bundle is not named after one platform"; exit 1 ;;
+          esac
+          npx -y @anthropic-ai/mcpb@latest unpack "$bundle" unpacked
+          npx -y @anthropic-ai/mcpb@latest validate unpacked

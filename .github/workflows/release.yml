@@ -18,10 +18,16 @@ name: Release
 # owner `Synphonyte`, repository `mcpb`, workflow `release.yml`.
 # The workflow exchanges a short-lived GitHub OIDC token for a crates.io token
 # instead of storing one in the repository's secrets.
+#
+# Once the release exists, the `mcpb` binary is built for each platform and
+# attached to it, which `cargo binstall mcpb` and the GitHub Action download.
+# Then the major tag (`v0`) moves to this release, so `uses: Synphonyte/mcpb@v0`
+# runs it.
 
 on:
   push:
-    tags: ["v*"]
+    # Not `v*`: the `v0` tag the action moves would match it.
+    tags: ["v*.*.*"]
   # For a retry against an existing tag:
   #   gh workflow run release.yml --ref v0.2.0
   workflow_dispatch:
@@ -130,3 +136,80 @@ jobs:
         with:
           name: mcpb ${{ github.ref_name }}
           body_path: notes.md
+
+  # Archives named as `[package.metadata.binstall]` in Cargo.toml expects:
+  # mcpb-<target>.tgz, or .zip on Windows, with the binary at the top.
+  binaries:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl binaries are static, so they run on any Linux; binstall
+          # falls back to them on glibc systems.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # to attach the archives to the release
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - run: cargo build --release --locked --bin mcpb --target ${{ matrix.target }}
+
+      - name: Archive the binary
+        id: archive
+        shell: bash
+        run: |
+          dir="target/${{ matrix.target }}/release"
+          if [ "$RUNNER_OS" = Windows ]; then
+            archive="mcpb-${{ matrix.target }}.zip"
+            pwsh -NoProfile -Command "Compress-Archive -Force -Path '$dir/mcpb.exe' -DestinationPath '$archive'"
+          else
+            archive="mcpb-${{ matrix.target }}.tgz"
+            tar -czf "$archive" -C "$dir" mcpb
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      # The binary this job built, unpacked from its archive, has to run here.
+      - name: Check the archived binary runs
+        if: "!contains(matrix.target, 'x86_64-apple')"
+        shell: bash
+        run: |
+          mkdir unpacked
+          if [ "$RUNNER_OS" = Windows ]; then
+            pwsh -NoProfile -Command "Expand-Archive -Path '${{ steps.archive.outputs.archive }}' -DestinationPath unpacked"
+          else
+            tar -xzf "${{ steps.archive.outputs.archive }}" -C unpacked
+          fi
+          ./unpacked/mcpb --version | grep -qx "mcpb ${GITHUB_REF_NAME#v}"
+
+      # --clobber replaces an archive a failed run already attached.
+      - name: Attach the archive to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "${{ steps.archive.outputs.archive }}" --clobber
+
+  # Moves `v0` (the major version of the tag) to this release once its binaries
+  # are attached, so `uses: Synphonyte/mcpb@v0` runs the newest 0.x release.
+  # A tag pushed with the workflow's token starts no workflow of its own.
+  action-tag:
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to move the tag
+    steps:
+      - uses: actions/checkout@v6
+      - name: Move the major version tag
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"
