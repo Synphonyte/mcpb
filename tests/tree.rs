@@ -116,3 +116,72 @@ fn everything_the_example_ignores_stays_out_of_a_packed_directory() {
     spec.pack(&bundle).expect("the bundle packs again");
     assert_eq!(names(&bundle).len(), 4);
 }
+
+/// A tree of `real/sub/a.txt` and `alias -> real`, packed as data.
+#[cfg(unix)]
+fn linked(dir: &Path) -> BundleSpec {
+    let tree = dir.join("tree");
+    fs::create_dir_all(tree.join("real/sub")).unwrap();
+    fs::write(tree.join("real/sub/a.txt"), "a").unwrap();
+    std::os::unix::fs::symlink(tree.join("real"), tree.join("alias")).unwrap();
+    fs::write(dir.join("binary"), "\x7fELF fake").unwrap();
+
+    BundleSpec {
+        executables: BTreeMap::from([(
+            Platform::Linux,
+            Executable::new(dir.join("binary"), "x64"),
+        )]),
+        trees: vec![Tree::data(&tree)],
+        ..spec(dir)
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_and_a_link_to_it_are_both_packed() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let spec = linked(dir.path());
+
+    let bundle = dir.path().join("out.mcpb");
+    spec.pack(&bundle).expect("the bundle packs");
+    assert_eq!(
+        names(&bundle),
+        vec![
+            "manifest.json",
+            "server/alias/sub/a.txt",
+            "server/calculator-rust",
+            "server/real/sub/a.txt",
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_back_into_the_tree_is_not_followed_forever() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let spec = linked(dir.path());
+    let tree = dir.path().join("tree");
+    std::os::unix::fs::symlink(&tree, tree.join("real/sub/up")).unwrap();
+
+    let bundle = dir.path().join("out.mcpb");
+    spec.pack(&bundle).expect("the bundle packs");
+    assert_eq!(names(&bundle).len(), 4);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_is_refused_unless_it_is_left_out() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let spec = linked(dir.path());
+    let tree = dir.path().join("tree");
+    std::os::unix::fs::symlink(tree.join("gone"), tree.join("latest")).unwrap();
+
+    let bundle = dir.path().join("out.mcpb");
+    let error = spec
+        .pack(&bundle)
+        .expect_err("a link to nothing is not packed");
+    assert!(error.to_string().contains("latest"), "{error}");
+
+    fs::write(tree.join(".mcpbignore"), "latest\n").unwrap();
+    spec.pack(&bundle).expect("the bundle packs without it");
+}

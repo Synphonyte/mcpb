@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::{BundleSpec, Error, MANIFEST_VERSION, RESOURCES_DIR, SERVER_DIR};
+use crate::{BundleFile, BundleSpec, Error, MANIFEST_VERSION, RESOURCES_DIR, SERVER_DIR};
 
 /// What ends a signed bundle, after the zip and the signature. This crate does
 /// not sign, so it only reports whether a bundle carries a signature.
@@ -141,32 +141,49 @@ impl Bundle {
     /// running them, and the per-locale translations it points at as a whole.
     pub fn spec(&self) -> Result<BundleSpec, Error> {
         let mut spec = BundleSpec::from_manifest(&self.manifest)?;
-        let binaries: Vec<String> = spec
+
+        // What the manifest names already has its place in the spec.
+        let mut named: Vec<String> = spec
             .executables
             .keys()
             .map(|platform| spec.executable_path(*platform))
             .collect();
+        named.push("manifest.json".to_string());
+        named.extend(
+            spec.icon_files()
+                .chain(spec.screenshots.iter().map(PathBuf::as_path))
+                .map(|path| path.to_string_lossy().into_owned()),
+        );
 
         for entry in &self.entries {
-            if binaries.contains(&entry.name) {
+            if named.contains(&entry.name) {
                 continue;
             }
-            if let Some(locale) = entry
+            let locale = entry
                 .name
                 .strip_prefix(&format!("{RESOURCES_DIR}/"))
-                .and_then(|name| name.strip_suffix(".json"))
-            {
-                if let Some(localization) = &mut spec.localization {
+                .and_then(|name| name.strip_suffix(".json"));
+            let beside_server = entry
+                .name
+                .strip_prefix(&format!("{SERVER_DIR}/"))
+                .is_some_and(|name| !name.contains('/'));
+
+            match (locale, &mut spec.localization) {
+                (Some(locale), Some(localization)) => {
                     localization
                         .locales
                         .insert(locale.to_string(), PathBuf::from(&entry.name));
                 }
-            } else if entry.name.starts_with(&format!("{SERVER_DIR}/")) {
-                if entry.executable {
+                _ if beside_server && entry.executable => {
                     spec.extra_executables.push(PathBuf::from(&entry.name));
-                } else {
-                    spec.resources.push(PathBuf::from(&entry.name));
                 }
+                _ if beside_server => spec.resources.push(PathBuf::from(&entry.name)),
+                // Anything deeper, or outside `server/`, keeps the name it has.
+                _ => spec.files.push(BundleFile {
+                    path: PathBuf::from(&entry.name),
+                    name: entry.name.clone(),
+                    mode: if entry.executable { 0o755 } else { 0o644 },
+                }),
             }
         }
 
@@ -219,7 +236,7 @@ impl std::fmt::Display for Bundle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} {} ({} client{} behind it)",
+            "{} {} ({} file{})",
             self.manifest["name"].as_str().unwrap_or("a bundle"),
             self.manifest["version"].as_str().unwrap_or("?"),
             self.entries.len(),
@@ -416,6 +433,68 @@ mod tests {
 
         // The manifest it writes of that is the one the bundle already has.
         assert_eq!(read.manifest(), spec.manifest());
+    }
+
+    #[test]
+    fn nested_files_come_back_where_they_were() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let tree = dir.path().join("tree");
+        fs::create_dir_all(tree.join("lib/sub")).unwrap();
+        fs::write(tree.join("lib/sub/a.txt"), b"a").unwrap();
+        fs::write(tree.join("lib/b.txt"), b"b").unwrap();
+        let assets = dir.path().join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("style.css"), b"css").unwrap();
+
+        let spec = BundleSpec {
+            name: "test-server".to_string(),
+            version: "1.2.3".parse().unwrap(),
+            description: "A test server.".to_string(),
+            author: Author::new("Test"),
+            executables: BTreeMap::from([(Platform::Linux, Executable::new(&binary, "arm64"))]),
+            trees: vec![
+                crate::Tree::data(&tree),
+                crate::Tree::data(&assets).in_dir("assets"),
+            ],
+            ..BundleSpec::default()
+        };
+        let path = dir.path().join("first.mcpb");
+        spec.pack(&path).unwrap();
+
+        // Extracted, read back and packed again, as for a new version.
+        let bundle = Bundle::open(&path).unwrap();
+        let unpacked = dir.path().join("unpacked");
+        bundle.extract_to(&unpacked).unwrap();
+        let again = dir.path().join("again.mcpb");
+        bundle
+            .spec()
+            .unwrap()
+            .in_dir(&unpacked)
+            .pack(&again)
+            .unwrap();
+
+        let names = |path: &Path| {
+            Bundle::open(path)
+                .unwrap()
+                .entries()
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(&again),
+            [
+                "manifest.json",
+                "assets/style.css",
+                "server/lib/b.txt",
+                "server/lib/sub/a.txt",
+                "server/test-server",
+            ]
+        );
+        assert_eq!(names(&again), names(&path));
+        assert_eq!(bundle.to_string(), "test-server 1.2.3 (5 files)");
     }
 
     #[test]

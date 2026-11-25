@@ -26,6 +26,8 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::user_config` (`UserConfig`: `key`, `kind`, `title`, `description`, `required`,
   `sensitive`, `multiple`, `default`, `min`, `max`), with a constructor per `UserConfigKind`
   (`string`, `number`, `boolean`, `directory`, `file`), written as the manifest's `user_config`.
+- `BundleSpec::files` (`BundleFile`: `path`, `name`, `mode`), one file written
+  under a name of its own anywhere in the bundle.
 - `BundleSpec::pack_to` writes the bundle to any `Write + Seek`, such as a `Cursor` over a `Vec`,
   and hands it back; `pack` writes it to a path through the same code.
 - `pack`, `pack_to` and everything they call return `Error`, an enum that implements `Debug`,
@@ -140,8 +142,29 @@ All notable changes to this crate are documented here. It follows
 - Files are written under their own file names only when those are UTF-8;
   before, other names were converted lossily.
 
+- A tree packs a directory and a symlink to it under both names; only a link
+  back into a directory the walk is inside is cut. A link to nothing is refused
+  unless the `.mcpbignore` or the format leaves it out.
+- A `.mcpbignore` pattern that starts with `/` matches from the tree's root only,
+  as in a `.gitignore`.
+- `user_config` is written, and read back, in the order the spec gives it, which
+  is the order clients ask in.
+- `from_manifest` refuses a `server.type` other than `binary` and a
+  `mcp_config.command` that does not start the entry point, instead of
+  rewriting them; an entry point in a subdirectory of `server/` keeps its place
+  (`Executable::name` may hold `/`), and one outside `server/` is refused.
+- `Bundle::spec` gives back files deeper than `server/`, or elsewhere in the
+  bundle, as `BundleFile`s under their names, so a bundle read back and packed
+  again keeps its layout.
+- `mcpb validate` says what is not valid instead of that it "can't be packed",
+  and for a bundle also reports the files its manifest names that it does not
+  hold.
+- A tree may go into a path with a leading or trailing `/`.
+
 ### Dependencies
 
+- `serde_json` is built with `preserve_order`, so a manifest keeps the order it
+  was written in.
 - Added `semver`, which types the version of a bundle, and `serde`, whose traits
   let a manifest be serialized and deserialized in its own shape.
 - Added `jsonschema`, a dev-dependency of the schema test only.

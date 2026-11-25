@@ -110,6 +110,30 @@ fn a_spec_that_clients_would_refuse_is_reported() {
         "{}",
         text(&output)
     );
+    assert!(text(&output).contains("is not valid"), "{}", text(&output));
+    assert!(!text(&output).contains("packed"), "{}", text(&output));
+}
+
+#[test]
+fn a_bundle_without_the_files_its_manifest_names_is_reported() {
+    use std::io::Write;
+
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = dir.path().join("hollow.mcpb");
+    let mut zip = zip::ZipWriter::new(fs::File::create(&bundle).expect("the bundle"));
+    zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+        .expect("an entry");
+    zip.write_all(include_bytes!("fixtures/calculator-rust.manifest.json"))
+        .expect("the manifest");
+    zip.finish().expect("the zip");
+
+    let output = mcpb(&["validate", bundle.to_str().expect("UTF-8")]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("server.entry_point names server/mcp-calculator"),
+        "{}",
+        text(&output)
+    );
 }
 
 #[test]

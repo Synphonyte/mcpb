@@ -35,20 +35,31 @@ impl BundleSpec {
                 }
             }
             if let Some(name) = &executable.name {
-                if !is_name(name) {
+                if !name.split('/').all(is_name) {
                     problems.push(format!(
-                        "the {} executable's name {name:?} may only hold ASCII letters, digits, '-', '_' and '.'",
+                        "the {} executable's name {name:?} may only hold ASCII letters, digits, '-', '_' and '.', and '/' between directories",
                         platform.as_str()
                     ));
                 }
             }
         }
         for tree in &self.trees {
-            if !tree.into.is_empty() && !tree.into.split('/').all(is_name) {
+            // `server/assets/` and `/server/assets` go where `server/assets` does.
+            let into = tree.into.trim_matches('/');
+            if !into.is_empty() && !into.split('/').all(is_name) {
                 problems.push(format!(
                     "the tree {} goes into {:?}, which is not a path inside the bundle",
                     tree.path.display(),
                     tree.into
+                ));
+            }
+        }
+        for file in &self.files {
+            if !is_bundle_path(&file.name) {
+                problems.push(format!(
+                    "{} goes into {:?}, which is not a path inside the bundle",
+                    file.path.display(),
+                    file.name
                 ));
             }
         }
@@ -477,6 +488,15 @@ fn is_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// Whether the name is a file's path inside the bundle: relative, `/` between
+/// directories, and no part of it `.` or `..` that would lead elsewhere.
+fn is_bundle_path(name: &str) -> bool {
+    !name.contains('\\')
+        && name
+            .split('/')
+            .all(|part| !matches!(part, "" | "." | "..") && !part.contains(':'))
+}
+
 /// Whether the size reads `WIDTHxHEIGHT`.
 fn is_size(size: &str) -> bool {
     match size.split_once('x') {
@@ -548,6 +568,36 @@ mod tests {
     #[test]
     fn a_plain_spec_is_valid() {
         assert_eq!(spec().validate(), Ok(()));
+    }
+
+    #[test]
+    fn files_and_trees_stay_inside_the_bundle() {
+        let mut spec = spec();
+        spec.trees = vec![
+            crate::Tree::data("a").in_dir("server/assets/"),
+            crate::Tree::data("b").in_dir("/server/b"),
+        ];
+        spec.files = vec![crate::BundleFile::data("c", "server/lib/my file.txt")];
+        spec.executables.get_mut(&Platform::Linux).unwrap().name = Some("bin/server".to_string());
+        assert_eq!(spec.validate(), Ok(()));
+
+        for name in [
+            "../x",
+            "server/../../x",
+            "/etc/passwd",
+            "a//b",
+            "a\\b",
+            "C:x",
+            "",
+        ] {
+            spec.files = vec![crate::BundleFile::data("c", name)];
+            assert!(
+                problems(&spec)
+                    .iter()
+                    .any(|problem| problem.contains("not a path inside the bundle")),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]

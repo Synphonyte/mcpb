@@ -37,6 +37,24 @@ impl BundleSpec {
         let config = object(server.get("mcp_config"), "server.mcp_config")?;
         let compatibility = object(root.get("compatibility"), "compatibility")?;
 
+        // `manifest()` writes a binary server that starts its entry point, so a
+        // manifest of another kind would come back out as something else.
+        let kind = text(server.get("type"), "server.type")?;
+        if kind != "binary" {
+            return Err(Error::Manifest(format!(
+                "server.type is {kind:?}: this crate packs binary servers only"
+            )));
+        }
+        let entry_point = text(server.get("entry_point"), "server.entry_point")?;
+        let command = text(config.get("command"), "server.mcp_config.command")?;
+        if command != format!("${{__dirname}}/{entry_point}") {
+            return Err(Error::Manifest(format!(
+                "server.mcp_config.command {command:?} does not start the entry point: \
+                 a binary bundle runs \"${{__dirname}}/{entry_point}\", and a platform \
+                 that runs something else says so in its platform_overrides"
+            )));
+        }
+
         let version = text(root.get("version"), "version")?;
         let version = version.parse().map_err(|error| {
             Error::Manifest(format!("version {version:?} does not parse: {error}"))
@@ -62,6 +80,7 @@ impl BundleSpec {
             // A manifest names files, never directories: what a tree packed
             // reads back as the files it holds, next to the server.
             trees: Vec::new(),
+            files: Vec::new(),
             icon: text_opt(root.get("icon"), "icon")?.map(PathBuf::from),
             icons: icons(root.get("icons"))?,
             screenshots: texts(root.get("screenshots"), "screenshots")?
@@ -98,6 +117,9 @@ impl BundleSpec {
         spec.resources = self.resources.iter().map(|path| dir.join(path)).collect();
         for (tree, path) in spec.trees.iter_mut().zip(&self.trees) {
             tree.path = dir.join(&path.path);
+        }
+        for (file, path) in spec.files.iter_mut().zip(&self.files) {
+            file.path = dir.join(&path.path);
         }
         spec.icon = self.icon.as_deref().map(|path| dir.join(path));
         for (icon, path) in spec.icons.iter_mut().zip(&self.icons) {
@@ -194,6 +216,12 @@ fn executables(
 ) -> Result<BTreeMap<Platform, Executable>, Error> {
     let entry_point = text(server.get("entry_point"), "server.entry_point")?;
     let overrides = overrides(config.get("platform_overrides"))?;
+    if !entry_point.starts_with("server/") {
+        return Err(Error::Manifest(format!(
+            "server.entry_point {entry_point:?} is not in server/, where this crate writes \
+             the binaries"
+        )));
+    }
 
     let mut executables = BTreeMap::new();
     let mut platforms = Vec::new();
@@ -209,20 +237,20 @@ fn executables(
     }
 
     for platform in platforms {
+        // A platform whose override starts a file of `server/` runs a binary
+        // of its own. Any other command - `node`, a wrapper elsewhere in the
+        // bundle - wraps the entry point, and stays in the override.
         let own = overrides
             .get(&platform)
-            .and_then(|config| config.command.as_deref());
-        let path = match own {
-            Some(command) => command
-                .strip_prefix("${__dirname}/")
-                .unwrap_or(command)
-                .to_string(),
-            None => entry_point.clone(),
-        };
+            .and_then(|config| config.command.as_deref())
+            .and_then(|command| command.strip_prefix("${__dirname}/"))
+            .filter(|path| path.starts_with("server/"));
+        let path = own.unwrap_or(&entry_point).to_string();
 
-        // The manifest spells Windows' binary with its `.exe`; the spec leaves
-        // the suffix to the writer.
-        let mut name = path.rsplit('/').next().unwrap_or(&path).to_string();
+        // The binary keeps its place under `server/`, subdirectory and all. The
+        // manifest spells Windows' binary with its `.exe`; the spec leaves the
+        // suffix to the writer.
+        let mut name = path["server/".len()..].to_string();
         if platform == Platform::Win32 {
             name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
         }
@@ -513,6 +541,81 @@ mod tests {
         assert_eq!(
             spec.executables[&Platform::Linux].path,
             Path::new("server/s")
+        );
+    }
+
+    /// A binary manifest with `entry_point`, started as it says.
+    fn binary(entry_point: &str) -> Value {
+        serde_json::json!({
+            "manifest_version": "0.3",
+            "name": "s",
+            "version": "1.0.0",
+            "description": "d",
+            "author": { "name": "me" },
+            "server": {
+                "type": "binary",
+                "entry_point": entry_point,
+                "mcp_config": { "command": format!("${{__dirname}}/{entry_point}") },
+            },
+            "compatibility": { "platforms": ["darwin"] },
+        })
+    }
+
+    #[test]
+    fn only_a_binary_server_is_read() {
+        let mut manifest = binary("server/index.js");
+        manifest["server"]["type"] = "node".into();
+        manifest["server"]["mcp_config"]["command"] = "node".into();
+
+        let error = BundleSpec::from_manifest(&manifest).unwrap_err();
+        assert!(error.to_string().contains("binary servers only"), "{error}");
+    }
+
+    #[test]
+    fn a_command_other_than_the_entry_point_is_refused() {
+        let mut manifest = binary("server/s");
+        manifest["server"]["mcp_config"]["command"] = "${__dirname}/server/other".into();
+
+        let error = BundleSpec::from_manifest(&manifest).unwrap_err();
+        assert!(
+            error.to_string().contains("does not start the entry point"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_entry_point_keeps_its_directory_under_server() {
+        let spec = BundleSpec::from_manifest(&binary("server/bin/s")).unwrap();
+        assert_eq!(spec.entry_point().as_deref(), Some("server/bin/s"));
+        assert_eq!(spec.manifest(), {
+            let mut manifest = binary("server/bin/s");
+            manifest["display_name"] = "s".into();
+            manifest["server"]["mcp_config"]["args"] = serde_json::json!([]);
+            manifest["server"]["mcp_config"]["env"] = serde_json::json!({});
+            manifest["tools"] = serde_json::json!([]);
+            manifest
+        });
+        assert_eq!(spec.validate(), Ok(()));
+
+        let error = BundleSpec::from_manifest(&binary("bin/s")).unwrap_err();
+        assert!(error.to_string().contains("is not in server/"), "{error}");
+    }
+
+    #[test]
+    fn an_override_that_wraps_the_server_keeps_its_binary() {
+        let mut manifest = binary("server/s");
+        manifest["compatibility"]["platforms"] = serde_json::json!(["darwin", "linux"]);
+        manifest["server"]["mcp_config"]["platform_overrides"] =
+            serde_json::json!({ "linux": { "command": "/usr/bin/env" } });
+
+        let spec = BundleSpec::from_manifest(&manifest).unwrap();
+        assert_eq!(
+            spec.executables[&Platform::Linux].path,
+            Path::new("server/s")
+        );
+        assert_eq!(
+            spec.manifest()["server"]["mcp_config"]["platform_overrides"],
+            serde_json::json!({ "linux": { "command": "/usr/bin/env" } })
         );
     }
 

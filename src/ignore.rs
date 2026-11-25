@@ -51,6 +51,9 @@ struct Rule {
     negated: bool,
     /// Matches only a directory, and with it everything in it.
     directory: bool,
+    /// Matches from the tree's root only, as a pattern that starts with `/` or
+    /// has one in its middle does; any other matches a name at any depth.
+    anchored: bool,
 }
 
 impl Exclusions {
@@ -116,6 +119,7 @@ impl Rule {
             line = &line[1..];
         }
         let directory = line.ends_with('/');
+        let rooted = line.starts_with('/') || line.starts_with("./");
         let pattern = line
             .trim_start_matches("./")
             .trim_start_matches('/')
@@ -125,6 +129,7 @@ impl Rule {
             pattern: pattern.to_string(),
             negated,
             directory,
+            anchored: rooted || pattern.contains('/'),
         }
     }
 
@@ -132,15 +137,16 @@ impl Rule {
         if self.directory && !directory {
             return false;
         }
-        matches_pattern(&self.pattern, name)
+        matches_pattern(&self.pattern, self.anchored, name)
     }
 }
 
-/// Whether `name`, relative to the tree's root, matches `pattern`.
-fn matches_pattern(pattern: &str, name: &str) -> bool {
+/// Whether `name`, relative to the tree's root, matches `pattern`: from the
+/// root when it is `anchored`, else wherever on the way.
+fn matches_pattern(pattern: &str, anchored: bool, name: &str) -> bool {
     let parts = name.split('/').collect::<Vec<_>>();
 
-    if !pattern.contains('/') {
+    if !anchored {
         // Any one of the names on the way, as a `.gitignore` does.
         return parts.iter().any(|part| matches_segment(pattern, part));
     }
@@ -213,6 +219,20 @@ mod tests {
         let exclusions = rules(&["src/*.test.ts"]);
         assert!(exclusions.excludes("src/a.test.ts", false));
         assert!(!exclusions.excludes("nested/src/a.test.ts", false));
+    }
+
+    #[test]
+    fn a_leading_slash_anchors_a_name_at_the_root() {
+        for pattern in ["/build", "./build", "/build/"] {
+            let exclusions = rules(&[pattern]);
+            assert!(exclusions.excludes("build", true), "{pattern}");
+            assert!(exclusions.excludes("build/out.txt", false), "{pattern}");
+            assert!(!exclusions.excludes("lib/build", true), "{pattern}");
+            assert!(
+                !exclusions.excludes("lib/build/out.txt", false),
+                "{pattern}"
+            );
+        }
     }
 
     #[test]

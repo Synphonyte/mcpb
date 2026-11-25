@@ -9,7 +9,7 @@ mod validate;
 
 pub use bundle::{Bundle, Entry};
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -501,9 +501,11 @@ pub struct Executable {
     /// so it only names the bundle - see [`BundleSpec::file_name`]. `None` for a
     /// spec read from a manifest, which does not carry one.
     pub arch: Option<String>,
-    /// The file name it is written under in `server/`, Windows' `.exe` left
-    /// out. `None` names it after the bundle, which is what a spec being packed
-    /// usually wants; a manifest of the caller's own may name it otherwise.
+    /// The name it is written under in `server/`, Windows' `.exe` left out,
+    /// with `/` between directories for a binary in a subdirectory such as
+    /// `bin/my-server`. `None` names it after the bundle, which is what a spec
+    /// being packed usually wants; a manifest of the caller's own may name it
+    /// otherwise.
     pub name: Option<String>,
 }
 
@@ -522,6 +524,40 @@ impl Executable {
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
+    }
+}
+
+/// One file written under a name of its own in the bundle, such as
+/// `server/lib/libcalculator.dylib`: what [`Bundle::spec`] gives back for the
+/// files of a bundle that sit deeper than `server/` and that the manifest does
+/// not name, so packing the spec again puts them where they were.
+#[derive(Clone, Debug)]
+pub struct BundleFile {
+    /// The file on disk.
+    pub path: PathBuf,
+    /// Its name in the bundle, with `/` between directories.
+    pub name: String,
+    /// The mode it is written with: 755 for what is run, 644 for what is only
+    /// read.
+    pub mode: u32,
+}
+
+impl BundleFile {
+    /// The file at `path`, written as the program `name`.
+    pub fn new(path: impl Into<PathBuf>, name: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            name: name.into(),
+            mode: 0o755,
+        }
+    }
+
+    /// The same, written as a file to read rather than as a program.
+    pub fn data(path: impl Into<PathBuf>, name: impl Into<String>) -> Self {
+        Self {
+            mode: 0o644,
+            ..Self::new(path, name)
+        }
     }
 }
 
@@ -636,6 +672,8 @@ pub struct BundleSpec {
     pub resources: Vec<PathBuf>,
     /// Directories packed whole, as they are laid out on disk - see [`Tree`].
     pub trees: Vec<Tree>,
+    /// Single files written under a name of their own - see [`BundleFile`].
+    pub files: Vec<BundleFile>,
     /// The bundle's icon, a PNG written to the root of the bundle.
     pub icon: Option<PathBuf>,
     /// Further icons, for sizes and themes. The first one without a theme is
@@ -696,6 +734,7 @@ impl Default for BundleSpec {
             extra_executables: Vec::new(),
             resources: Vec::new(),
             trees: Vec::new(),
+            files: Vec::new(),
             icon: None,
             icons: Vec::new(),
             screenshots: Vec::new(),
@@ -988,7 +1027,7 @@ impl BundleSpec {
         }
 
         self.check_icons()?;
-        self.files(writing)
+        self.contents(writing)
     }
 
     /// The bundle itself, into anything that can be written and seeked.
@@ -1038,7 +1077,7 @@ impl BundleSpec {
     }
 
     /// The icons the bundle ships, `icon` first.
-    fn icon_files(&self) -> impl Iterator<Item = &Path> {
+    pub(crate) fn icon_files(&self) -> impl Iterator<Item = &Path> {
         self.icon
             .as_deref()
             .into_iter()
@@ -1055,7 +1094,7 @@ impl BundleSpec {
     /// spec packs the same bytes whatever order the directory they came from
     /// listed them in. The bundle being written is left out, so a bundle packed
     /// into a directory it packs does not pack the previous one.
-    fn files(&self, writing: Option<&Path>) -> Result<Vec<(String, PathBuf, u32)>, Error> {
+    fn contents(&self, writing: Option<&Path>) -> Result<Vec<(String, PathBuf, u32)>, Error> {
         const EXECUTABLE: u32 = 0o755;
         const PLAIN: u32 = 0o644;
 
@@ -1106,6 +1145,9 @@ impl BundleSpec {
                 files.push((tree.name(&name), path, tree.mode));
             }
         }
+        for file in &self.files {
+            files.push((file.name.clone(), file.path.clone(), file.mode));
+        }
 
         let mut unique: Vec<(String, PathBuf, u32)> = Vec::with_capacity(files.len());
         for (name, file, mode) in files {
@@ -1140,7 +1182,7 @@ impl Tree {
     fn files(&self) -> Result<Vec<(String, PathBuf)>, Error> {
         let exclusions = Exclusions::at(&self.path)?;
         let mut files = Vec::new();
-        self.walk("", &exclusions, &mut HashSet::new(), &mut files)?;
+        self.walk("", &exclusions, &mut Vec::new(), &mut files)?;
         Ok(files)
     }
 
@@ -1148,7 +1190,7 @@ impl Tree {
         &self,
         name: &str,
         exclusions: &Exclusions,
-        visited: &mut HashSet<PathBuf>,
+        ancestors: &mut Vec<PathBuf>,
         files: &mut Vec<(String, PathBuf)>,
     ) -> Result<(), Error> {
         let dir = if name.is_empty() {
@@ -1157,17 +1199,32 @@ impl Tree {
             self.path.join(name)
         };
 
-        // A directory reached twice - through a symlink that leads back - is
-        // packed once.
+        // A symlink that leads back into a directory the walk is inside would
+        // never end, so it is cut. `ancestors` holds only the directories above
+        // this one: a directory reached again by another way - `lib/current`
+        // beside the `lib/v2` it points at - is packed under both names.
         let real = fs::canonicalize(&dir).map_err(|error| Error::read(&dir, error))?;
-        if !visited.insert(real) {
+        if ancestors.contains(&real) {
             return Ok(());
         }
+        ancestors.push(real);
+        let walked = self.walk_entries(name, &dir, exclusions, ancestors, files);
+        ancestors.pop();
+        walked
+    }
 
-        let mut entries = fs::read_dir(&dir)
-            .map_err(|error| Error::read(&dir, error))?
+    fn walk_entries(
+        &self,
+        name: &str,
+        dir: &Path,
+        exclusions: &Exclusions,
+        ancestors: &mut Vec<PathBuf>,
+        files: &mut Vec<(String, PathBuf)>,
+    ) -> Result<(), Error> {
+        let mut entries = fs::read_dir(dir)
+            .map_err(|error| Error::read(dir, error))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| Error::read(&dir, error))?;
+            .map_err(|error| Error::read(dir, error))?;
         entries.sort_by_key(fs::DirEntry::file_name);
 
         for entry in entries {
@@ -1177,13 +1234,22 @@ impl Tree {
                 false => format!("{name}/{}", name_of(Path::new(&file_name))?),
             };
 
-            // A symlink is packed as what it points at.
-            let metadata = fs::metadata(entry.path()).map_err(|error| Error::read(&dir, error))?;
+            // A symlink is packed as what it points at. One that points at
+            // nothing is only a problem when it would be packed: whether it
+            // was meant as a file or a directory, a pattern that leaves either
+            // out takes it.
+            let metadata = match fs::metadata(entry.path()) {
+                Ok(metadata) => metadata,
+                Err(_) if exclusions.excludes(&name, false) || exclusions.excludes(&name, true) => {
+                    continue;
+                }
+                Err(error) => return Err(Error::read(entry.path(), error)),
+            };
             if metadata.is_dir() {
                 if exclusions.excludes(&name, true) && !exclusions.keeps_files() {
                     continue;
                 }
-                self.walk(&name, exclusions, visited, files)?;
+                self.walk(&name, exclusions, ancestors, files)?;
             } else if metadata.is_file() && !exclusions.excludes(&name, false) {
                 files.push((name, entry.path()));
             }
@@ -1476,6 +1542,21 @@ mod tests {
         ];
 
         let manifest = spec.manifest();
+        // Clients show the fields in the order the manifest lists them.
+        assert_eq!(
+            manifest["user_config"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            [
+                "project_dir",
+                "api_key",
+                "limit",
+                "read_only",
+                "config_file"
+            ]
+        );
         assert_eq!(
             manifest["user_config"]["project_dir"],
             json!({

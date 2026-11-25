@@ -54,14 +54,25 @@ fn main() -> ExitCode {
             eprintln!("mcpb: {error}");
             ExitCode::FAILURE
         }
+        Err(Failure::Invalid { what, problems }) => {
+            eprintln!("mcpb: {} is not valid:", what.display());
+            for problem in problems {
+                eprintln!("  - {problem}");
+            }
+            ExitCode::FAILURE
+        }
     }
 }
 
-/// Why the command did not finish: the caller got the arguments wrong, or the
-/// work itself failed.
+/// Why the command did not finish: the caller got the arguments wrong, the
+/// work itself failed, or what `validate` looked at is not valid.
 enum Failure {
     Usage(String),
     Failed(Error),
+    Invalid {
+        what: PathBuf,
+        problems: Vec<String>,
+    },
 }
 
 impl From<Error> for Failure {
@@ -283,8 +294,15 @@ fn valid(
     what: &Path,
     bundle: Option<&Bundle>,
 ) -> Result<Option<String>, Failure> {
-    if let Err(problems) = spec.validate() {
-        return Err(Failure::Failed(Error::Invalid(problems)));
+    let mut problems = spec.validate().err().unwrap_or_default();
+    if let Some(bundle) = bundle {
+        problems.extend(missing(bundle));
+    }
+    if !problems.is_empty() {
+        return Err(Failure::Invalid {
+            what: what.to_path_buf(),
+            problems,
+        });
     }
 
     let mut text = format!(
@@ -306,6 +324,46 @@ fn valid(
     }
 
     Ok(Some(text))
+}
+
+/// The files the bundle's manifest points at that the bundle does not hold:
+/// the entry point, each platform's own binary, the icons and the screenshots.
+fn missing(bundle: &Bundle) -> Vec<String> {
+    let manifest = bundle.manifest();
+    let mut named: Vec<(&str, &str)> = Vec::new();
+
+    if let Some(entry_point) = bundle.entry_point() {
+        named.push(("server.entry_point", entry_point));
+    }
+    if let Some(overrides) = manifest["server"]["mcp_config"]["platform_overrides"].as_object() {
+        for config in overrides.values() {
+            if let Some(path) = config["command"]
+                .as_str()
+                .and_then(|command| command.strip_prefix("${__dirname}/"))
+            {
+                named.push(("a platform override's command", path));
+            }
+        }
+    }
+    if let Some(icon) = manifest["icon"].as_str() {
+        named.push(("icon", icon));
+    }
+    for icon in manifest["icons"].as_array().into_iter().flatten() {
+        if let Some(src) = icon["src"].as_str() {
+            named.push(("icons", src));
+        }
+    }
+    for screenshot in manifest["screenshots"].as_array().into_iter().flatten() {
+        if let Some(path) = screenshot.as_str() {
+            named.push(("screenshots", path));
+        }
+    }
+
+    named
+        .into_iter()
+        .filter(|(_, path)| !bundle.entries().iter().any(|entry| entry.name == *path))
+        .map(|(what, path)| format!("{what} names {path}, which the bundle does not hold"))
+        .collect()
 }
 
 fn info(path: &Path) -> Result<String, Failure> {

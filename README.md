@@ -145,8 +145,12 @@ What a server needs beside it that is more than a file - data files, packages, t
 it runs - is a [`Tree`]: a directory packed as it is laid out, into `server/` or anywhere else in
 the bundle. A tree is packed without what the format leaves out anyway (`.git/`, `*.log`,
 `node_modules/.cache/`, lockfiles, `.mcpbignore` …) and without what the `.mcpbignore` at its root
-names. [`Tree::new`] writes its files as programs, `Tree::data` as files to read, and
-`Tree::in_dir` puts them somewhere other than `server/`:
+names, read as a `.gitignore` is: a pattern that starts with `/` or holds one in its middle
+matches from the tree's root only, any other at any depth. A symlink is packed as what it points
+at, a directory reached by two names is packed under both, and a link back into a directory the
+walk is inside is not followed; a link to nothing is refused unless a pattern leaves it out.
+[`Tree::new`] writes its files as programs, `Tree::data` as files to read, and `Tree::in_dir` puts
+them somewhere other than `server/`:
 
 ```rust,no_run
 # fn main() -> Result<(), mcpb::Error> {
@@ -162,6 +166,8 @@ spec.trees = vec![
 # Ok(())
 # }
 ```
+
+A single file goes wherever a [`BundleFile`] names it, such as `server/lib/libcalculator.dylib`.
 
 `pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
 partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a
@@ -213,7 +219,12 @@ spec.pack(format!("dist/{}", spec.file_name()).as_ref())?;
 
 What the manifest does not carry - the architecture of a binary, the helpers and resources next to
 the server, the locales - is what [`Bundle::spec`] reads from the files themselves;
-`from_manifest` alone leaves those empty, since a manifest does not name them. `BundleSpec` is also
+`from_manifest` alone leaves those empty, since a manifest does not name them. A file deeper than
+`server/`, or anywhere else the manifest does not point, comes back as a [`BundleFile`] under the
+name it had, so packing the spec again puts every file where it was. `from_manifest` reads a binary
+server only, whose `mcp_config.command` starts its `entry_point` somewhere under `server/`
+(`server/bin/my-server` stays where it is); anything else is refused rather than rewritten.
+`user_config` keeps the order the manifest gives it, which is the order clients ask in. `BundleSpec` is also
 `Serialize` and `Deserialize` in the manifest's shape, so a caller can keep one in its own
 configuration file.
 
@@ -243,7 +254,9 @@ spec. It looks at the spec alone:
   and `min` is not above `max`
 
 `pack` additionally reads the files: an icon that is not a PNG is refused, since clients show
-nothing else, and so is a second, different file whose name is already taken in the zip.
+nothing else, and so is a second, different file whose name is already taken in the zip. `mcpb
+validate` on a bundle also checks that the bundle holds what its manifest names: the entry point,
+each platform's own binary, the icons and the screenshots.
 
 `cargo test` also validates what [`manifest`](BundleSpec::manifest) writes against the manifest
 format's own JSON schema (`tests/schemas/`, taken from the MCP Bundle repository), so what clients
