@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
+/// A semantic version, re-exported: it types [`BundleSpec::version`], so a
+/// caller does not need `semver` in its own dependencies.
+pub use semver::Version;
+
 /// The manifest format the bundles are written in.
 pub const MANIFEST_VERSION: &str = "0.3";
 
@@ -30,6 +34,8 @@ pub enum Error {
     /// The spec would produce a bundle clients refuse. Every problem is here, and
     /// [`BundleSpec::validate`] reports the same list.
     Invalid(Vec<String>),
+    /// A version that is not a semantic version.
+    Version(semver::Error),
     /// A file that belongs in the bundle could not be read.
     Read {
         path: PathBuf,
@@ -44,6 +50,12 @@ pub enum Error {
     Icon(PathBuf),
     /// Two files of the bundle would be written under the same name.
     Clash { file: PathBuf, name: String },
+    /// The file is not a bundle this crate can read, and the reason is the
+    /// manifest that is missing or the JSON that is not what a manifest holds.
+    Bundle { path: PathBuf, reason: String },
+    /// A file of the bundle is named so that writing it would leave the
+    /// directory it is unpacked into.
+    Unsafe(String),
 }
 
 impl Error {
@@ -66,6 +78,7 @@ impl std::fmt::Display for Error {
                 Ok(())
             }
             Self::Read { path, source } => write!(f, "can't read {}: {source}", path.display()),
+            Self::Version(source) => write!(f, "the version is not a semantic version: {source}"),
             Self::Write { source } => write!(f, "can't write the bundle: {source}"),
             Self::Name(path) => write!(
                 f,
@@ -82,6 +95,16 @@ impl std::fmt::Display for Error {
                 "{} would overwrite {name}: two files of the bundle share a name.",
                 file.display()
             ),
+            Self::Bundle { path, reason } => {
+                write!(
+                    f,
+                    "{} is not a bundle we can read: {reason}",
+                    path.display()
+                )
+            }
+            Self::Unsafe(name) => {
+                write!(f, "{name} would be written outside the bundle's directory")
+            }
         }
     }
 }
@@ -89,9 +112,21 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Invalid(_) | Self::Name(_) | Self::Icon(_) | Self::Clash { .. } => None,
+            Self::Invalid(_)
+            | Self::Name(_)
+            | Self::Icon(_)
+            | Self::Clash { .. }
+            | Self::Bundle { .. }
+            | Self::Unsafe(_) => None,
+            Self::Version(source) => Some(source),
             Self::Read { source, .. } | Self::Write { source } => Some(source),
         }
+    }
+}
+
+impl From<semver::Error> for Error {
+    fn from(source: semver::Error) -> Self {
+        Self::Version(source)
     }
 }
 
@@ -143,11 +178,12 @@ impl Platform {
         }
     }
 
-    /// From what the manifest, or the name of a bundle, says.
+    /// From the spelling the manifest uses - `darwin`, `win32`, `linux` - and
+    /// nothing else, so a release script that says `macos` hears about it.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
-            "darwin" | "macos" => Some(Self::Darwin),
-            "win32" | "windows" => Some(Self::Win32),
+            "darwin" => Some(Self::Darwin),
+            "win32" => Some(Self::Win32),
             "linux" => Some(Self::Linux),
             _ => None,
         }
@@ -443,11 +479,16 @@ impl Repository {
 /// A server binary, and the CPU architecture it was built for.
 #[derive(Clone, Debug)]
 pub struct Executable {
-    /// The compiled server.
+    /// The compiled server, where it was built.
     pub path: PathBuf,
     /// Such as `arm64` or `x64`. The manifest cannot switch per architecture,
-    /// so it only names the bundle - see [`BundleSpec::file_name`].
-    pub arch: String,
+    /// so it only names the bundle - see [`BundleSpec::file_name`]. `None` for a
+    /// spec read from a manifest, which does not carry one.
+    pub arch: Option<String>,
+    /// The file name it is written under in `server/`, Windows' `.exe` left
+    /// out. `None` names it after the bundle, which is what a spec being packed
+    /// usually wants; a manifest of the caller's own may name it otherwise.
+    pub name: Option<String>,
 }
 
 impl Executable {
@@ -455,8 +496,16 @@ impl Executable {
     pub fn new(path: impl Into<PathBuf>, arch: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            arch: arch.into(),
+            arch: Some(arch.into()),
+            name: None,
         }
+    }
+
+    /// The binary written into `server/` as `name` instead of after the bundle,
+    /// Windows' `.exe` left out.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 }
 
@@ -471,7 +520,7 @@ impl Executable {
 /// # use mcpb::{Author, BundleSpec, Executable, Platform};
 /// let spec = BundleSpec {
 ///     name: "my-server".into(),
-///     version: "1.2.3".into(),
+///     version: "1.2.3".parse().expect("a semantic version"),
 ///     description: "What the server does.".into(),
 ///     author: Author::new("Me"),
 ///     executables: BTreeMap::from([(
@@ -488,8 +537,8 @@ pub struct BundleSpec {
     pub name: String,
     /// What clients show as the extension's name. `name` by default.
     pub display_name: Option<String>,
-    /// A semantic version.
-    pub version: String,
+    /// A semantic version, which is also what names the bundle file.
+    pub version: Version,
     /// What the server does, in a sentence.
     pub description: String,
     /// A longer description for extension stores, in markdown.
@@ -565,7 +614,7 @@ impl Default for BundleSpec {
         Self {
             name: String::new(),
             display_name: None,
-            version: String::new(),
+            version: Version::new(0, 0, 0),
             description: String::new(),
             long_description: None,
             author: Author::default(),
@@ -622,19 +671,25 @@ impl Prompt {
 }
 
 impl BundleSpec {
-    /// The path of a platform's executable inside the bundle. The first
-    /// platform's binary is named after the bundle, so it is the manifest's
-    /// `entry_point`; the others carry their platform's name too, since a zip
-    /// cannot hold two files with one name.
-    fn executable_path(&self, platform: Platform) -> String {
-        let stem = if self.executables.keys().next() == Some(&platform) {
-            self.name.clone()
-        } else {
-            format!("{}-{}", self.name, platform.as_str())
-        };
+    /// The path of a platform's executable inside the bundle. A binary named
+    /// after the bundle is `server/<bundle name>`, and with several platforms
+    /// each further one is `server/<bundle name>-<platform>`, since a zip cannot
+    /// hold two files with one name. A binary that names itself keeps that name.
+    pub(crate) fn executable_path(&self, platform: Platform) -> String {
+        let named = self
+            .executables
+            .get(&platform)
+            .and_then(|executable| executable.name.clone());
+        let file = named.unwrap_or_else(|| {
+            if self.executables.keys().next() == Some(&platform) {
+                self.name.clone()
+            } else {
+                format!("{}-{}", self.name, platform.as_str())
+            }
+        });
         let file = match platform {
-            Platform::Win32 => format!("{stem}.exe"),
-            _ => stem,
+            Platform::Win32 if !file.ends_with(".exe") => format!("{file}.exe"),
+            _ => file,
         };
         format!("{SERVER_DIR}/{file}")
     }
@@ -655,7 +710,7 @@ impl BundleSpec {
             "manifest_version": MANIFEST_VERSION,
             "name": self.name,
             "display_name": self.display_name.as_deref().unwrap_or(&self.name),
-            "version": self.version,
+            "version": self.version.to_string(),
             "description": self.description,
             "author": self.author.to_manifest(),
             "server": {
@@ -756,9 +811,9 @@ impl BundleSpec {
         config.insert("env".to_string(), json!(self.env));
 
         // Each platform starts the binary built for it. The first one is the
-        // command above; every other platform overrides it, and what the spec
-        // overrides itself comes on top.
-        let first = self.executables.keys().next().copied();
+        // command above; every other platform whose binary is a different file
+        // overrides it, and what the spec overrides itself comes on top.
+        let entry = self.entry_point();
         let mut overrides = Map::new();
         for platform in self.executables.keys().copied() {
             let mut override_config = self
@@ -767,7 +822,8 @@ impl BundleSpec {
                 .map(PlatformConfig::to_manifest)
                 .unwrap_or_default();
 
-            if Some(platform) != first && !override_config.contains_key("command") {
+            let own_binary = Some(self.executable_path(platform));
+            if entry != own_binary && !override_config.contains_key("command") {
                 override_config.insert(
                     "command".to_string(),
                     json!(format!("${{__dirname}}/{}", self.executable_path(platform))),
@@ -801,12 +857,16 @@ impl BundleSpec {
     /// The bundle's file name. For one platform
     /// `<name>-<version>-<platform>-<arch>.mcpb`; for several, each platform
     /// with the architecture given for it, such as
-    /// `<name>-<version>-darwin-arm64-win32-x64.mcpb`.
+    /// `<name>-<version>-darwin-arm64-win32-x64.mcpb`. A spec read from a
+    /// manifest knows no architecture, so each platform is only named.
     pub fn file_name(&self) -> String {
         let platforms = self
             .executables
             .iter()
-            .map(|(platform, executable)| format!("{}-{}", platform.as_str(), executable.arch))
+            .map(|(platform, executable)| match &executable.arch {
+                Some(arch) => format!("{}-{arch}", platform.as_str()),
+                None => platform.as_str().to_string(),
+            })
             .collect::<Vec<_>>()
             .join("-");
         format!("{}-{}-{platforms}.mcpb", self.name, self.version)
@@ -1005,7 +1065,7 @@ mod tests {
     fn spec(platform: Platform, executable: PathBuf) -> BundleSpec {
         BundleSpec {
             name: "test-server".to_string(),
-            version: "1.2.3".to_string(),
+            version: "1.2.3".parse().expect("a semantic version"),
             description: "A test server.".to_string(),
             author: Author::new("Test"),
             executables: BTreeMap::from([(platform, Executable::new(executable, "arm64"))]),
@@ -1182,9 +1242,19 @@ mod tests {
 
     #[test]
     fn platforms_are_named_as_the_manifest_does() {
-        assert_eq!(Platform::parse("macos"), Some(Platform::Darwin));
-        assert_eq!(Platform::parse("windows"), Some(Platform::Win32));
-        assert_eq!(Platform::parse("plan9"), None);
+        for (name, platform) in [
+            ("darwin", Platform::Darwin),
+            ("linux", Platform::Linux),
+            ("win32", Platform::Win32),
+        ] {
+            assert_eq!(Platform::parse(name), Some(platform), "{name}");
+        }
+
+        // Only the manifest's spelling, so a release script that says `macos`
+        // hears about it rather than getting a bundle nobody can install.
+        for name in ["macos", "MacOS", "windows", "plan9", ""] {
+            assert_eq!(Platform::parse(name), None, "{name}");
+        }
     }
 
     #[test]
@@ -1608,7 +1678,6 @@ mod tests {
 
         let mut spec = spec(Platform::Linux, binary);
         spec.name = "my server".to_string();
-        spec.version = "1.2".to_string();
         spec.args.push("${usre_config.project_dir}".to_string());
 
         let bundle = dir.path().join("out.mcpb");
@@ -1617,7 +1686,6 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("can't be packed"), "{message}");
         assert!(message.contains("ASCII letters"), "{message}");
-        assert!(message.contains("semantic version"), "{message}");
         assert!(message.contains("${usre_config.project_dir}"), "{message}");
         assert!(!bundle.exists());
     }
@@ -1658,6 +1726,72 @@ mod tests {
         assert!(
             error.to_string().contains("would overwrite manifest.json"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn an_executable_can_name_itself() {
+        let mut spec = spec(Platform::Darwin, "x".into());
+        spec.name = "calculator-rust".to_string();
+        spec.executables.insert(
+            Platform::Darwin,
+            Executable::new("x", "arm64").named("mcp-calculator"),
+        );
+
+        assert_eq!(spec.entry_point().as_deref(), Some("server/mcp-calculator"));
+        assert_eq!(
+            spec.manifest()["server"]["entry_point"],
+            "server/mcp-calculator"
+        );
+        assert_eq!(
+            spec.manifest()["server"]["mcp_config"]["command"],
+            "${__dirname}/server/mcp-calculator"
+        );
+    }
+
+    #[test]
+    fn a_manifest_that_names_one_binary_for_two_platforms_needs_no_override() {
+        let mut spec = spec(Platform::Darwin, "x".into());
+        spec.executables.insert(
+            Platform::Linux,
+            Executable::new("x", "arm64").named("test-server"),
+        );
+
+        let config = &spec.manifest()["server"]["mcp_config"];
+        assert!(config.get("platform_overrides").is_none(), "{config}");
+        assert_eq!(
+            spec.manifest()["compatibility"]["platforms"],
+            json!(["darwin", "linux"])
+        );
+    }
+
+    #[test]
+    fn a_file_name_without_an_architecture_names_only_the_platform() {
+        let mut spec = spec(Platform::Darwin, "x".into());
+        assert_eq!(spec.file_name(), "test-server-1.2.3-darwin-arm64.mcpb");
+
+        // What a spec read from a manifest knows: no architecture.
+        for executable in spec.executables.values_mut() {
+            executable.arch = None;
+        }
+        assert_eq!(spec.file_name(), "test-server-1.2.3-darwin.mcpb");
+    }
+
+    #[test]
+    fn two_executables_may_not_be_written_under_one_name() {
+        let mut spec = spec(Platform::Darwin, "x".into());
+        spec.executables.insert(
+            Platform::Linux,
+            Executable::new("x", "arm64").named("test-server"),
+        );
+
+        let problems = spec.validate().unwrap_err();
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem
+                    .contains("two executables are written as \"server/test-server\"")),
+            "{problems:?}"
         );
     }
 }

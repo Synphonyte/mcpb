@@ -19,13 +19,14 @@ fn main() -> Result<(), mcpb::Error> {
     let spec = BundleSpec {
         name: "my-server".into(),
         display_name: None,
-        version: "1.2.3".into(),
+        version: "1.2.3".parse()?,
         description: "What the server does.".into(),
         author: Author::new("Me"),
         executables: BTreeMap::from([(
             Platform::Darwin,
             Executable::new("target/release/my-server", "arm64"),
-        )]),        extra_executables: Vec::new(),
+        )]),
+        extra_executables: Vec::new(),
         resources: vec!["THIRD-PARTY-NOTICES.md".into()],
         icon: Some("assets/icon.png".into()),
         icons: vec![Icon {
@@ -67,7 +68,10 @@ platforms and the bundle starts each platform's own binary through `platform_ove
 1.85 or later, since it is edition 2024.
 
 Everything but the name, the version, the description, the author, the platform and the executable
-has a default, so `..BundleSpec::default()` keeps a spec to what it says.
+has a default, so `..BundleSpec::default()` keeps a spec to what it says. The version is a
+[`Version`], so `"1.2.3".parse()?` either gives one or fails where the spec is built; `Platform` is
+named as the manifest spells it (`darwin`, `linux`, `win32`), and `Platform::parse` takes nothing
+else, so a release script that says `macos` hears about it.
 
 Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation on
 [docs.rs](https://docs.rs/mcpb); before 1.0 the API is not stable.
@@ -118,7 +122,7 @@ spec. It looks at the spec alone:
 
 - the name may only hold ASCII letters, digits, `-`, `_` and `.`, and cannot be `.` or `..`, since
   it names the executable and the bundle file
-- the version is a semantic version
+- the version is a semantic version, which [`Version`] enforces before a spec can hold one
 - description, author and the directory prompt say something, and so do every tool's description
   and every prompt's text
 - the author's email and the URLs (`author.url`, `homepage`, `documentation`, `support`,

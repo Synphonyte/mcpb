@@ -49,7 +49,7 @@ fn assert_fits(spec: &BundleSpec) {
 fn minimal() -> BundleSpec {
     BundleSpec {
         name: "schema-server".to_string(),
-        version: "1.2.3".to_string(),
+        version: "1.2.3".parse().expect("a semantic version"),
         description: "A server the schema checks.".to_string(),
         author: Author::new("Test"),
         executables: BTreeMap::from([(Platform::Linux, Executable::new("server-binary", "x64"))]),

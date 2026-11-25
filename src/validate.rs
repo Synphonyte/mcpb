@@ -21,21 +21,33 @@ impl BundleSpec {
                 self.name
             ));
         }
-        if let Err(error) = semver::Version::parse(&self.version) {
-            problems.push(format!(
-                "version {:?} is not a semantic version: {error}",
-                self.version
-            ));
-        }
         if self.executables.is_empty() {
             problems.push("the bundle runs on no platform: give it an executable".to_string());
         }
         for (platform, executable) in &self.executables {
-            if !is_name(&executable.arch) {
+            if let Some(arch) = &executable.arch {
+                if !is_name(arch) {
+                    problems.push(format!(
+                        "the {} executable's arch {arch:?} may only hold ASCII letters, digits, '-', '_' and '.'",
+                        platform.as_str()
+                    ));
+                }
+            }
+            if let Some(name) = &executable.name {
+                if !is_name(name) {
+                    problems.push(format!(
+                        "the {} executable's name {name:?} may only hold ASCII letters, digits, '-', '_' and '.'",
+                        platform.as_str()
+                    ));
+                }
+            }
+        }
+        let mut executable_paths = HashSet::new();
+        for platform in self.executables.keys() {
+            let path = self.executable_path(*platform);
+            if !executable_paths.insert(path.clone()) {
                 problems.push(format!(
-                    "the {} executable's arch {:?} may only hold ASCII letters, digits, '-', '_' and '.'",
-                    platform.as_str(),
-                    executable.arch
+                    "two executables are written as {path:?}: give one of them a name of its own"
                 ));
             }
         }
@@ -494,7 +506,7 @@ mod tests {
     fn spec() -> BundleSpec {
         BundleSpec {
             name: "test-server".to_string(),
-            version: "1.2.3".to_string(),
+            version: "1.2.3".parse().expect("a semantic version"),
             description: "A test server.".to_string(),
             author: Author::new("Test"),
             executables: BTreeMap::from([(
@@ -543,22 +555,19 @@ mod tests {
     }
 
     #[test]
-    fn the_version_has_to_be_a_semantic_version() {
-        for version in ["", "1.2", "1.2.3.4", "v1.2.3", "1.2.x"] {
-            let mut spec = spec();
-            spec.version = version.to_string();
-            assert!(
-                problems(&spec)
-                    .iter()
-                    .any(|problem| problem.contains("semantic version")),
-                "{version:?}"
-            );
-        }
-
+    fn the_version_is_a_semantic_version() {
         for version in ["1.2.3", "0.1.0", "1.0.0-rc.1", "1.0.0+build.5"] {
             let mut spec = spec();
-            spec.version = version.to_string();
+            spec.version = version.parse().expect("a semantic version");
             assert_eq!(spec.validate(), Ok(()), "{version:?}");
+        }
+
+        // The type is the gate, so a spec cannot hold a version semver refuses.
+        for version in ["", "1.2", "1.2.3.4", "v1.2.3", "1.2.x"] {
+            assert!(
+                version.parse::<crate::Version>().is_err(),
+                "{version:?} became a version"
+            );
         }
     }
 

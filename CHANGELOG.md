@@ -49,6 +49,15 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::localization` (`Localization`: `default_locale`, `locales`),
   writing the manifest's `localization` and packing each locale at
   `mcpb-resources/<locale>.json`.
+- `BundleSpec::version` is a [`semver::Version`] rather than a `String`, re-exported as
+  `mcpb::Version`, and `Error` gained `From<semver::Error>`, so a spec is built with
+  `version: "1.2.3".parse()?` and cannot hold a version semver refuses.
+- `Executable::named`, which writes the binary under a name of its own (`server/mcp-calculator`) for a
+  manifest that does not name its entry point after the bundle, and `Executable::arch` is
+  `Option<String>`: a spec read from a manifest knows no architecture, and `file_name` then names the
+  platform alone.
+- `BundleSpec::platform_overrides` is only generated for a platform whose binary is a different file
+  than `entry_point`, so a manifest that names one binary for several platforms stays as it is.
 - A test that checks every shape of manifest this crate writes against the
   manifest format's own JSON schema, vendored in `tests/schemas/`, so what
   clients accept is not only what our own tests expect.
@@ -68,6 +77,9 @@ All notable changes to this crate are documented here. It follows
 - **Breaking:** `directory` is gone in favour of `UserConfig::directory` in
   `user_config`, and `pack` no longer appends it as an argument: `args` names
   `${user_config.<key>}` where the spec wants it.
+- **Breaking:** `Platform::parse` takes only the manifest's spelling (`darwin`, `linux`, `win32`);
+  `macos` and `windows` are no longer accepted, so a wrong platform name is reported instead of
+  silently packed.
 - **Breaking:** `platform` and `executable` are gone in favour of
   `executables`, a map from `Platform` to `Executable` (`path` and `arch`),
   which is how a bundle runs on several platforms. `file_name` takes no
@@ -77,10 +89,11 @@ All notable changes to this crate are documented here. It follows
 - `validate` also refuses an author without a name, an email or a URL that does
   not look like one, an empty `long_description` or `license`, repeated
   keywords, a `_meta` namespace that holds no object, and a `user_config` entry
-  whose key, default, or `min` and `max` do not fit its type.
-- `validate` refuses a bundle without an executable, an architecture that cannot
-  be a file name, and a `platform_overrides` entry for a platform the bundle has
-  no executable for.
+  whose key, default, or `min` and `max` do not fit its type. A version that is
+  not a semantic version is no longer reported, since the type refuses it first.
+- `validate` refuses a bundle without an executable, an architecture or an executable name that
+  cannot be a file name, two platforms whose binaries would be written under one name, and a
+  `platform_overrides` entry for a platform the bundle has no executable for.
 - The same spec now packs to the same bytes every time: the entries are written in a fixed order
   with a fixed timestamp, and the executable is streamed into the zip instead of read whole.
 - `pack` refuses a spec that `validate` rejects, and an icon that is not a PNG,

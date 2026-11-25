@@ -57,7 +57,9 @@ fn pack() -> Result<PathBuf, String> {
     let spec = BundleSpec {
         name: "mcpb-example".to_string(),
         display_name: Some("mcpb example".to_string()),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: env!("CARGO_PKG_VERSION")
+            .parse()
+            .expect("the crate's version is a semantic version"),
         description: "A bundle built by the mcpb crate's own example.".to_string(),
         author: Author::new("Synphonyte"),
         executables: BTreeMap::from([(platform, Executable::new(executable, arch.clone()))]),

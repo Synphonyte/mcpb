@@ -82,10 +82,10 @@ last two are about the crate and its release.
   own error type. `validate` still returns the problems as `Vec<String>`, since that is a report.
 - [x] `BundleSpec` ergonomics: `Default` and `..BundleSpec::default()`, so callers spell only what
   they set. A builder is not needed while the fields are public and the struct is plain data.
-- [ ] Typed where the spec constrains the string: `version` should be a semver type, and
-  `BundleSpec::file_name` takes `arch: &str` that nothing checks. `Platform::parse` accepts
-  `macos` and `windows` while `Platform::as_str` writes the spec's spelling — decide whether that
-  leniency stays a convenience or becomes an error.
+- [x] Typed where the spec constrains the string: `version` is a `semver::Version` (re-exported as
+  `mcpb::Version`), `Executable` carries an `Option<String>` arch that `validate` checks, and
+  `Platform::parse` takes only the manifest's spelling (`darwin`, `linux`, `win32`), so `macos` is
+  reported rather than packed.
 - [ ] `Serialize` / `Deserialize` for `BundleSpec` and `Platform`, so a manifest can be read,
   edited and written back. `validate`, `info` and "same manifest, new version" all need it, and it
   lets a caller keep the manifest in its own config file.
