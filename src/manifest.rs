@@ -14,8 +14,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::{
-    Author, BundleSpec, Error, Executable, Icon, Localization, Platform, PlatformConfig, Prompt,
-    Repository, UserConfig, UserConfigKind,
+    Author, BundleFile, BundleSpec, Error, Executable, Icon, Localization, Platform,
+    PlatformConfig, Prompt, Repository, UserConfig, UserConfigKind,
 };
 
 impl BundleSpec {
@@ -80,7 +80,13 @@ impl BundleSpec {
             // A manifest names files, never directories: what a tree packed
             // reads back as the files it holds, next to the server.
             trees: Vec::new(),
-            files: Vec::new(),
+            // A screenshot below the root keeps its place through a file that
+            // puts it there; one at the root needs none.
+            files: texts(root.get("screenshots"), "screenshots")?
+                .into_iter()
+                .filter(|name| name.contains('/'))
+                .map(|name| BundleFile::data(&name, &name))
+                .collect(),
             icon: text_opt(root.get("icon"), "icon")?.map(PathBuf::from),
             icons: icons(root.get("icons"))?,
             screenshots: texts(root.get("screenshots"), "screenshots")?
@@ -616,6 +622,20 @@ mod tests {
         assert_eq!(
             spec.manifest()["server"]["mcp_config"]["platform_overrides"],
             serde_json::json!({ "linux": { "command": "/usr/bin/env" } })
+        );
+    }
+
+    #[test]
+    fn a_nested_screenshot_reads_back_in_its_place() {
+        let mut manifest = binary("server/s");
+        manifest["screenshots"] = serde_json::json!(["shot.png", "assets/wide.png"]);
+
+        let spec = BundleSpec::from_manifest(&manifest)
+            .unwrap()
+            .in_dir("/unpacked");
+        assert_eq!(
+            spec.manifest()["screenshots"],
+            serde_json::json!(["shot.png", "assets/wide.png"])
         );
     }
 

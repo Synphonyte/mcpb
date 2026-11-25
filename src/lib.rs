@@ -681,7 +681,8 @@ pub struct BundleSpec {
     /// field show an icon as well.
     pub icons: Vec<Icon>,
     /// What the extension looks like, written to the root of the bundle under
-    /// their own file names.
+    /// their own file names - or, for a screenshot whose path is also one of
+    /// [`Self::files`], under that file's name, such as `assets/shot.png`.
     pub screenshots: Vec<PathBuf>,
     /// Shown to the user before install: name and description of each tool.
     pub tools: Vec<(String, String)>,
@@ -879,7 +880,7 @@ impl BundleSpec {
             manifest["screenshots"] = Value::Array(
                 self.screenshots
                     .iter()
-                    .filter_map(|path| archive_name(path).map(|name| json!(name)))
+                    .filter_map(|path| self.screenshot_name(path).map(|name| json!(name)))
                     .collect(),
             );
         }
@@ -948,6 +949,15 @@ impl BundleSpec {
         }
 
         Value::Object(config)
+    }
+
+    /// Where a screenshot goes in the bundle: where a [`BundleFile`] of the same
+    /// path puts it, or else the root, under its own name.
+    pub(crate) fn screenshot_name<'a>(&'a self, path: &'a Path) -> Option<&'a str> {
+        match self.files.iter().find(|file| file.path == path) {
+            Some(file) => Some(&file.name),
+            None => archive_name(path),
+        }
     }
 
     /// The icon the manifest's single `icon` field shows: the one the spec
@@ -1128,7 +1138,10 @@ impl BundleSpec {
             files.push((name_of(icon)?.to_string(), icon.to_path_buf(), PLAIN));
         }
         for screenshot in &self.screenshots {
-            files.push((name_of(screenshot)?.to_string(), screenshot.clone(), PLAIN));
+            // A screenshot that a `BundleFile` places is written there, below.
+            if !self.files.iter().any(|file| &file.path == screenshot) {
+                files.push((name_of(screenshot)?.to_string(), screenshot.clone(), PLAIN));
+            }
         }
         if let Some(localization) = &self.localization {
             for (locale, path) in &localization.locales {
@@ -1835,6 +1848,31 @@ mod tests {
         );
 
         spec.validate().unwrap();
+    }
+
+    #[test]
+    fn a_screenshot_goes_where_a_bundle_file_puts_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let screenshot = dir.path().join("shot.png");
+        fs::write(&screenshot, b"whatever a screenshot is").unwrap();
+
+        let mut spec = spec(Platform::Linux, binary);
+        spec.screenshots = vec![screenshot.clone()];
+        spec.files = vec![BundleFile::data(&screenshot, "assets/shot.png")];
+        assert_eq!(spec.manifest()["screenshots"], json!(["assets/shot.png"]));
+
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+        let names = crate::Bundle::open(&bundle)
+            .unwrap()
+            .entries()
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"assets/shot.png".to_string()), "{names:?}");
+        assert!(!names.contains(&"shot.png".to_string()), "{names:?}");
     }
 
     #[test]

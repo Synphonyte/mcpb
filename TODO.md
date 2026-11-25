@@ -19,8 +19,9 @@ last two are about the crate and its release.
 - [x] `icons` (array of `src`, `size` as `WIDTHxHEIGHT`, `theme` for light/dark) and the legacy
   single `icon`. The files are written to the bundle's root under their own names, which is where
   the manifest points; the first icon without a theme is also written as the plain `icon`.
-- [x] `screenshots`, written to the bundle's root under their own names like the icons. A nested
-  path in the manifest needs the directory walk below.
+- [x] `screenshots`, written to the bundle's root under their own names like the icons, or below
+  it where a `BundleFile` of the same path puts them (`assets/shot.png`); a manifest's nested
+  screenshot reads back that way. Icons are still root-only.
 - [x] `localization`: `default_locale` and the per-locale files in the bundle. `resources` is fixed
   to `mcpb-resources/${locale}.json`; a path of the caller's choosing would need a field.
 - [x] `_meta` as raw JSON: `BundleSpec::meta`, a map from reverse-DNS namespace to the object the
@@ -55,16 +56,17 @@ last two are about the crate and its release.
   `mcpb validate` over the artifact.
 - [x] Pack a directory tree instead of single files: `BundleSpec::trees` (`Tree`), packed with the
   CLI's default exclusion list, the lines of a `.mcpbignore` at the directory's root, and nested
-  paths. What a node, python or `uv` server would still need is a server type other than `binary` —
-  a separate decision, since the crate's point is that there is no runtime to ship.
+  paths. A node, python or `uv` server is out of scope, since the crate's point is that there is no
+  runtime to ship: `from_manifest` refuses a `server.type` other than `binary`.
 - [x] Read a bundle back (`mcpb info`): `Bundle::open` gives size, manifest and signature state (and
   the files, which is what a release check wants); the `mcpb info` of the binary prints them.
 - [ ] `sign` / `verify` / `unsign`: a PKCS#7 SignedData trailer after the zip — the zip bytes, then
   `MCPB_SIG_V1`, a 4-byte little-endian length, the DER signature, `MCPB_SIG_END`. An unsigned
   bundle stays a plain zip, so this can come late; signing with the `mcpb` CLI after packing works
   today. A crypto stack is a heavy dependency for a crate that currently only writes files, so put
-  it behind a feature. Decided against for 0.2.0: clients only treat a CA-issued certificate as
-  signed, so a self-signed trailer buys little until someone needs a signed release.
+  it behind a feature. Decided against for 0.2.0 and again after it: clients only treat a
+  CA-issued certificate as signed, so a self-signed trailer buys little until someone needs a
+  signed release.
 - [x] Stream the executable into the zip instead of `fs::read`ing it whole, and pack to any
   `Write + Seek` rather than only to a path: `BundleSpec::pack_to` takes one, and `pack` is the file
   and rename around it.
@@ -94,7 +96,7 @@ last two are about the crate and its release.
 - [x] Crate docs as the front door: the spec version written, the platform limitation, and an
   example that is a doctest. The README is the crate's documentation (`#![doc = include_str!]`), so
   `cargo test` compiles its example.
-- [x] CI packs a bundle: `examples/pack.rs` packs the example binary (or one you point it at, with `--executable` and `--arch`), and a job on each of the three platforms unpacks the result and has the official CLI validate the manifest. On macOS it also packs the other Apple architecture from a cross-built binary. Arbitrary cross-compilation (Linux arm64, Windows arm64) would need other toolchains and is not there.
+- [x] CI packs a bundle: `examples/pack.rs` packs the example binary (or one you point it at, with `--executable` and `--arch`), and a job on each of the three platforms unpacks the result and has the official CLI validate the manifest. On macOS it also packs the other Apple architecture from a cross-built binary, and the `ubuntu-24.04-arm` and `windows-11-arm` runners test and pack Linux and Windows arm64 natively.
 - [x] Prove the declared MSRV: `rust-version = "1.85"`, which edition 2024 needs. `Cargo.lock` is
   committed and every CI job runs with `--locked`, with an `msrv` job that runs `cargo test --locked`
   on 1.85, so the promise is checked against the versions that were tested.
@@ -113,6 +115,6 @@ last two are about the crate and its release.
   Publishing and creates the GitHub release from the changelog.
 - [x] Allow that workflow to publish: crates.io → the crate → Settings → Trusted Publishing → add a
   GitHub publisher for owner `Synphonyte`, repository `mcpb`, workflow `release.yml`.
-- [ ] Cut 0.2.0: date the changelog's `0.2.0` section, commit, tag `v0.2.0`, push, and watch the
+- [x] Cut 0.2.0: date the changelog's `0.2.0` section, commit, tag `v0.2.0`, push, and watch the
   Release run publish the crate and open the release.
-- [ ] Check the built docs.rs page once the first release lands.
+- [x] Check the built docs.rs page once the first release lands: https://docs.rs/mcpb/0.2.0 built.

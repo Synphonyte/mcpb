@@ -167,7 +167,9 @@ spec.trees = vec![
 # }
 ```
 
-A single file goes wherever a [`BundleFile`] names it, such as `server/lib/libcalculator.dylib`.
+A single file goes wherever a [`BundleFile`] names it, such as `server/lib/libcalculator.dylib`. A
+screenshot whose path is also a `BundleFile` is written there, and the manifest names it there, such
+as `assets/shot.png`; any other screenshot goes to the bundle's root.
 
 `pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
 partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a

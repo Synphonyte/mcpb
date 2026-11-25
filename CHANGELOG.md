@@ -4,6 +4,16 @@ All notable changes to this crate are documented here. It follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- A screenshot whose path is also one of `BundleSpec::files` is written, and
+  named in the manifest, where that `BundleFile` puts it, such as
+  `assets/shot.png`; a manifest's nested screenshots read back that way.
+- CI tests and packs on the `ubuntu-24.04-arm` and `windows-11-arm` runners, so
+  Linux and Windows arm64 are covered.
+
 ## 0.2.0 - 2026-11-24
 
 ### Added
