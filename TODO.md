@@ -57,8 +57,8 @@ last two are about the crate and its release.
   CLI's default exclusion list, the lines of a `.mcpbignore` at the directory's root, and nested
   paths. What a node, python or `uv` server would still need is a server type other than `binary` —
   a separate decision, since the crate's point is that there is no runtime to ship.
-- [ ] Read a bundle back (`mcpb info`): size, manifest, signature state. Useful on its own for
-  checking what a release actually contains.
+- [x] Read a bundle back (`mcpb info`): `Bundle::open` gives size, manifest and signature state (and
+  the files, which is what a release check wants); the `mcpb info` of the binary prints them.
 - [ ] `sign` / `verify` / `unsign`: a PKCS#7 SignedData trailer after the zip — the zip bytes, then
   `MCPB_SIG_V1`, a 4-byte little-endian length, the DER signature, `MCPB_SIG_END`. An unsigned
   bundle stays a plain zip, so this can come late; signing with the `mcpb` CLI after packing works
@@ -89,8 +89,8 @@ last two are about the crate and its release.
   serde form, which is what "same manifest, new version" and the reference-manifest test use.
 - [x] `Bundle::open`: read the manifest of an existing `.mcpb`, list what it holds, extract it, and
   read its spec back with `Bundle::spec`.
-- [ ] A binary, so this is `cargo install mcpb` for people who do not want Node installed: `pack`,
-  `info`, `validate`.
+- [x] A binary, so this is `cargo install mcpb` for people who do not want Node installed: `pack`
+  (`--arch`, `-o`, `--tree`, `--data`), `validate` and `info`.
 - [x] Crate docs as the front door: the spec version written, the platform limitation, and an
   example that is a doctest. The README is the crate's documentation (`#![doc = include_str!]`), so
   `cargo test` compiles its example.

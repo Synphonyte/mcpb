@@ -64,6 +64,10 @@ All notable changes to this crate are documented here. It follows
   for the signature a bundle may carry after its zip; `extract_to` unpacks it,
   refusing a name that would leave the directory. A file that is no zip, or a
   zip without a `manifest.json`, is refused as `Error::Bundle`.
+- A binary, `cargo install mcpb`: `pack` a manifest (with `--arch`, `--tree` and
+  `--data`), `validate` a manifest, a directory or a bundle, and `info` a bundle -
+  the same checks and reads the library offers, for people without a Rust program
+  in the way.
 - `BundleSpec::trees` (`Tree`): a directory packed as it is laid out, into
   `server/` or anywhere else in the bundle, minus the format's own exclusions
   and the lines of a `.mcpbignore` at its root (the `.gitignore` subset:

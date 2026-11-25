@@ -7,7 +7,8 @@ zip with a `manifest.json` and the server binary, which clients such as Claude D
 one click. No Node and no `mcpb` CLI.
 
 ```sh
-cargo add mcpb
+cargo add mcpb          # as a library
+cargo install --locked mcpb   # or as a command
 ```
 
 ```rust,no_run
@@ -75,6 +76,39 @@ else, so a release script that says `macos` hears about it.
 
 Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation on
 [docs.rs](https://docs.rs/mcpb); before 1.0 the API is not stable.
+
+## On the command line
+
+`cargo install mcpb` gives the same thing without a Rust program in the way: `pack` a manifest,
+`validate` a manifest or a bundle, `info` a bundle.
+
+```sh
+mcpb pack path/to/manifest.json --arch arm64 -o my-server.mcpb
+mcpb validate my-server.mcpb
+mcpb info my-server.mcpb
+```
+
+`pack` reads the manifest's paths relative to the manifest, names the bundle
+`<name>-<version>-<platform>-<arch>.mcpb` unless `-o` says where to put it, and `--tree dir` packs the
+files of a directory into `server/` as they are laid out (as `.mcpbignore` leaves them) for a server
+with files beside its binary - `--data dir` writes them as files to read rather than as programs.
+`info` prints what a bundle holds:
+
+```text
+calculator-rust 1.0.0
+  bundle: out.mcpb (893 B)
+  manifest version: 0.3
+  platforms: darwin, linux
+  entry point: server/mcp-calculator
+  signed: no
+  files:
+      1.1 KiB  manifest.json
+          9 B  server/libcalculator.dylib *
+         19 B  server/mcp-calculator *
+```
+
+`*` marks a file written as a program. Everything a person reads there is what [`Bundle`] hands a
+Rust program as well, so a release check can be a few lines instead of a session at a terminal.
 
 ## What goes into a bundle
 
@@ -216,12 +250,13 @@ accept is checked rather than assumed from our own expectations.
 
 ## Not yet
 
-Signing (`mcpb sign`/`verify`). Bundles are unsigned, which [`Bundle::is_signed`] reports; sign
-them with the `mcpb` CLI after packing if you need a signature.
+Signing (`mcpb sign`/`verify`). Bundles are unsigned, which `mcpb info` and [`Bundle::is_signed`]
+report; sign them with the `mcpb` CLI after packing if you need a signature. A server type other
+than `binary` - node, python, `uv` - is out of scope: the crate's point is that there is no runtime
+to ship.
 
-[TODO.md](TODO.md) is the full list, both of what the spec has and what the crate still needs to be
-useful on its own: more `user_config` kinds, the rest of the manifest's metadata fields, `_meta`,
-nested files with `.mcpbignore`, reading a bundle back, and a `cargo install mcpb` binary.
+[TODO.md](TODO.md) is the full list of what the crate still needs, and of what the spec has that a
+binary bundle has no use for.
 
 ## Releasing
 
