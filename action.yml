@@ -156,9 +156,12 @@ runs:
         command=(mcpb pack "$MANIFEST" --platform "$platform" --arch "$arch")
         if [ -n "$EXECUTABLE" ]; then
           executable="$EXECUTABLE"
-          if [ "$platform" = win32 ] && [ ! -e "$executable" ] && [ -e "$executable.exe" ]; then
-            executable="$executable.exe"
-          fi
+          # Git Bash reports `foo` as existing when only `foo.exe` does, so
+          # look for the `.exe` first rather than for `foo` going missing.
+          case "$executable" in
+            *.exe) ;;
+            *) if [ "$platform" = win32 ] && [ -f "$executable.exe" ]; then executable="$executable.exe"; fi ;;
+          esac
           if [ ! -f "$executable" ]; then
             echo "::error::the executable $executable does not exist; build it before this step"
             exit 1
