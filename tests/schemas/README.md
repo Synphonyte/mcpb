@@ -16,3 +16,7 @@ file is not compiled into the crate; `include_str!` in that test reads it.
 When the format moves on, replace the file with the new version's schema, keep
 the name in `manifest.rs`/`Cargo.toml` in step, and fix what the schema reports
 until it passes again.
+
+The `Upstream specs` workflow checks the specification repository weekly and
+opens an issue when the schema or the format's release changes, so this file
+doesn't fall behind unnoticed.
