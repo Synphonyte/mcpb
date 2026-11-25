@@ -4,7 +4,7 @@ All notable changes to this crate are documented here. It follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.1 - 2026-11-25
 
 ### Added
 
@@ -17,6 +17,10 @@ All notable changes to this crate are documented here. It follows
   that way, an icon named twice placed once.
 - CI tests and packs on the `ubuntu-24.04-arm` and `windows-11-arm` runners, so
   Linux and Windows arm64 are covered.
+
+### Changed
+
+- The README and API documentation are shorter and plainer.
 
 ## 0.2.0 - 2026-11-24
 
