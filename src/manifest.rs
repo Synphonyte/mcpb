@@ -59,6 +59,9 @@ impl BundleSpec {
             executables: executables(server, config, compatibility)?,
             extra_executables: Vec::new(),
             resources: Vec::new(),
+            // A manifest names files, never directories: what a tree packed
+            // reads back as the files it holds, next to the server.
+            trees: Vec::new(),
             icon: text_opt(root.get("icon"), "icon")?.map(PathBuf::from),
             icons: icons(root.get("icons"))?,
             screenshots: texts(root.get("screenshots"), "screenshots")?
@@ -93,6 +96,9 @@ impl BundleSpec {
             .map(|path| dir.join(path))
             .collect();
         spec.resources = self.resources.iter().map(|path| dir.join(path)).collect();
+        for (tree, path) in spec.trees.iter_mut().zip(&self.trees) {
+            tree.path = dir.join(&path.path);
+        }
         spec.icon = self.icon.as_deref().map(|path| dir.join(path));
         for (icon, path) in spec.icons.iter_mut().zip(&self.icons) {
             icon.path = dir.join(&path.path);

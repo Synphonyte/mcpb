@@ -3,17 +3,20 @@
 #![doc = include_str!("../README.md")]
 
 mod bundle;
+mod ignore;
 mod manifest;
 mod validate;
 
 pub use bundle::{Bundle, Entry};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
+
+use crate::ignore::Exclusions;
 
 /// A semantic version, re-exported: it types [`BundleSpec::version`], so a
 /// caller does not need `semver` in its own dependencies.
@@ -522,6 +525,55 @@ impl Executable {
     }
 }
 
+/// A directory packed as it is laid out on disk, for what a server needs beside
+/// it: data files, packages, the assets of a script it runs.
+///
+/// What is left out is the packaging side of it, not the server's: the format's
+/// own exclusions (`.git/`, `*.log`, `node_modules/.cache/`, lockfiles and the
+/// like), the `.mcpbignore` itself, and the lines of a `.mcpbignore` at the
+/// directory's root. Those read as
+/// a `.gitignore` does: one pattern a line, `#` for a comment, `!` to take a
+/// file back, a trailing `/` for a directory, `*` and `?` within a name, `**`
+/// across names, and a pattern without a `/` matching a name at any depth.
+#[derive(Clone, Debug)]
+pub struct Tree {
+    /// The directory to pack.
+    pub path: PathBuf,
+    /// Where what it holds goes in the bundle: `server` beside the binary, or
+    /// `""` for the bundle's root.
+    pub into: String,
+    /// The mode its files are written with: 755 for what is run, 644 for what is
+    /// only read.
+    pub mode: u32,
+}
+
+impl Tree {
+    /// The directory's files, written into `server/` beside the binary as
+    /// programs.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            into: SERVER_DIR.to_string(),
+            mode: 0o755,
+        }
+    }
+
+    /// The same, written as files to read rather than as programs.
+    pub fn data(path: impl Into<PathBuf>) -> Self {
+        Self {
+            mode: 0o644,
+            ..Self::new(path)
+        }
+    }
+
+    /// The directory's files written into `into` instead: `""` for the bundle's
+    /// root, or a path inside the bundle such as `server/assets`.
+    pub fn in_dir(mut self, into: impl Into<String>) -> Self {
+        self.into = into.into();
+        self
+    }
+}
+
 /// What goes into a bundle.
 ///
 /// Every field but the name, the version, the description, the author and the
@@ -582,6 +634,8 @@ pub struct BundleSpec {
     /// Files placed next to the server in `server/` that are read, not run
     /// (notices, licences), under their own file names.
     pub resources: Vec<PathBuf>,
+    /// Directories packed whole, as they are laid out on disk - see [`Tree`].
+    pub trees: Vec<Tree>,
     /// The bundle's icon, a PNG written to the root of the bundle.
     pub icon: Option<PathBuf>,
     /// Further icons, for sizes and themes. The first one without a theme is
@@ -641,6 +695,7 @@ impl Default for BundleSpec {
             executables: BTreeMap::new(),
             extra_executables: Vec::new(),
             resources: Vec::new(),
+            trees: Vec::new(),
             icon: None,
             icons: Vec::new(),
             screenshots: Vec::new(),
@@ -894,17 +949,21 @@ impl BundleSpec {
     /// a PNG, are refused. The bundle is written under a temporary name and
     /// moved into place, so a failed pack leaves no partial bundle behind.
     pub fn pack(&self, path: &Path) -> Result<(), Error> {
+        // Nothing is written before the files are listed, so a bundle written
+        // into a directory it packs does not pack itself.
+        let files = self.ready(Some(path))?;
+
         let temp = path.with_extension(format!("{}.tmp", std::process::id()));
         let file = fs::File::create(&temp)?;
 
-        if let Err(error) = self.pack_to(file) {
+        let written = self.write(file, files).and_then(|already| {
+            fs::rename(&temp, path)
+                .map_err(Error::from)
+                .map(|()| already)
+        });
+        if let Err(error) = written {
             let _ = fs::remove_file(&temp);
             return Err(error);
-        }
-
-        if let Err(error) = fs::rename(&temp, path) {
-            let _ = fs::remove_file(&temp);
-            return Err(Error::from(error));
         }
 
         Ok(())
@@ -916,13 +975,28 @@ impl BundleSpec {
     /// The same spec packs to the same bytes every time: the entries are written
     /// in a fixed order, with a fixed timestamp and no dependence on the host.
     pub fn pack_to<W: Write + Seek>(&self, writer: W) -> Result<W, Error> {
+        let files = self.ready(None)?;
+        self.write(writer, files)
+    }
+
+    /// What has to be right before anything is written: the spec, the icons, and
+    /// the files with the names they go under. `writing` is the bundle itself,
+    /// which is left out of what it packs.
+    fn ready(&self, writing: Option<&Path>) -> Result<Vec<(String, PathBuf, u32)>, Error> {
         if let Err(problems) = self.validate() {
             return Err(Error::Invalid(problems));
         }
 
         self.check_icons()?;
+        self.files(writing)
+    }
 
-        let files = self.files()?;
+    /// The bundle itself, into anything that can be written and seeked.
+    fn write<W: Write + Seek>(
+        &self,
+        writer: W,
+        files: Vec<(String, PathBuf, u32)>,
+    ) -> Result<W, Error> {
         let manifest =
             serde_json::to_vec_pretty(&self.manifest()).expect("a JSON value serializes");
 
@@ -938,7 +1012,7 @@ impl BundleSpec {
         zip.write_all(&manifest)?;
 
         for (name, file, mode) in files {
-            let mut source = fs::File::open(file).map_err(|error| Error::read(file, error))?;
+            let mut source = fs::File::open(&file).map_err(|error| Error::read(&file, error))?;
             zip.start_file(name, plain.unix_permissions(mode))?;
             std::io::copy(&mut source, &mut zip)?;
         }
@@ -974,12 +1048,14 @@ impl BundleSpec {
     /// Every file of the bundle by archive name, with the mode it is written
     /// with.
     ///
-    /// A file used twice - the same icon as `icon` and as an `icons` entry - is
-    /// written once. Two different files, or one file with two modes, would
-    /// overwrite one another in the zip and are refused.
-    fn files(&self) -> Result<Vec<(String, &Path, u32)>, Error> {
-        // TODO: single files under `server/` and at the bundle's root only. Nested
-        // paths need a directory walk with `.mcpbignore` exclusions. See `TODO.md`.
+    /// A file used twice - the same icon as `icon` and as an `icons` entry, one
+    /// binary for two platforms - is written once. Two different files, or one
+    /// file with two modes, would overwrite one another in the zip and are
+    /// refused. The files are sorted by their name in the bundle, so the same
+    /// spec packs the same bytes whatever order the directory they came from
+    /// listed them in. The bundle being written is left out, so a bundle packed
+    /// into a directory it packs does not pack the previous one.
+    fn files(&self, writing: Option<&Path>) -> Result<Vec<(String, PathBuf, u32)>, Error> {
         const EXECUTABLE: u32 = 0o755;
         const PLAIN: u32 = 0o644;
 
@@ -987,7 +1063,7 @@ impl BundleSpec {
         for (platform, executable) in &self.executables {
             files.push((
                 self.executable_path(*platform),
-                executable.path.as_path(),
+                executable.path.clone(),
                 EXECUTABLE,
             ));
         }
@@ -1001,7 +1077,7 @@ impl BundleSpec {
             for path in paths {
                 files.push((
                     format!("{SERVER_DIR}/{}", name_of(path)?),
-                    path.as_path(),
+                    path.clone(),
                     mode,
                 ));
             }
@@ -1010,51 +1086,127 @@ impl BundleSpec {
         // Icons, screenshots and translations keep the places the manifest
         // points at.
         for icon in self.icon_files() {
-            files.push((name_of(icon)?.to_string(), icon, PLAIN));
+            files.push((name_of(icon)?.to_string(), icon.to_path_buf(), PLAIN));
         }
         for screenshot in &self.screenshots {
-            files.push((
-                name_of(screenshot)?.to_string(),
-                screenshot.as_path(),
-                PLAIN,
-            ));
+            files.push((name_of(screenshot)?.to_string(), screenshot.clone(), PLAIN));
         }
         if let Some(localization) = &self.localization {
             for (locale, path) in &localization.locales {
                 files.push((
                     format!("{RESOURCES_DIR}/{locale}.json"),
-                    path.as_path(),
+                    path.clone(),
                     PLAIN,
                 ));
             }
         }
 
-        let mut unique: Vec<(String, &Path, u32)> = Vec::with_capacity(files.len());
+        for tree in &self.trees {
+            for (name, path) in tree.files()? {
+                files.push((tree.name(&name), path, tree.mode));
+            }
+        }
+
+        let mut unique: Vec<(String, PathBuf, u32)> = Vec::with_capacity(files.len());
         for (name, file, mode) in files {
             let already = unique
                 .iter()
                 .find(|(taken, _, _)| *taken == name)
-                .map(|(_, taken_file, taken_mode)| (*taken_file == file, *taken_mode == mode));
+                .map(|(_, taken, taken_mode)| (taken == &file, *taken_mode == mode));
 
             match already {
                 Some((true, true)) => {}
                 Some(_) => {
-                    return Err(Error::Clash {
-                        file: file.to_path_buf(),
-                        name,
-                    });
+                    return Err(Error::Clash { file, name });
                 }
                 None if name == "manifest.json" => {
-                    return Err(Error::Clash {
-                        file: file.to_path_buf(),
-                        name,
-                    });
+                    return Err(Error::Clash { file, name });
                 }
                 None => unique.push((name, file, mode)),
             }
         }
+        if let Some(writing) = writing {
+            unique.retain(|(_, file, _)| !same_file(file, writing));
+        }
+        unique.sort_by(|(one, ..), (other, ..)| one.cmp(other));
 
         Ok(unique)
+    }
+}
+
+impl Tree {
+    /// Every file of the tree, with its name inside the tree and its path on
+    /// disk, minus what a `.mcpbignore` and the format leave out.
+    fn files(&self) -> Result<Vec<(String, PathBuf)>, Error> {
+        let exclusions = Exclusions::at(&self.path)?;
+        let mut files = Vec::new();
+        self.walk("", &exclusions, &mut HashSet::new(), &mut files)?;
+        Ok(files)
+    }
+
+    fn walk(
+        &self,
+        name: &str,
+        exclusions: &Exclusions,
+        visited: &mut HashSet<PathBuf>,
+        files: &mut Vec<(String, PathBuf)>,
+    ) -> Result<(), Error> {
+        let dir = if name.is_empty() {
+            self.path.clone()
+        } else {
+            self.path.join(name)
+        };
+
+        // A directory reached twice - through a symlink that leads back - is
+        // packed once.
+        let real = fs::canonicalize(&dir).map_err(|error| Error::read(&dir, error))?;
+        if !visited.insert(real) {
+            return Ok(());
+        }
+
+        let mut entries = fs::read_dir(&dir)
+            .map_err(|error| Error::read(&dir, error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| Error::read(&dir, error))?;
+        entries.sort_by_key(fs::DirEntry::file_name);
+
+        for entry in entries {
+            let file_name = entry.file_name();
+            let name = match name.is_empty() {
+                true => name_of(Path::new(&file_name))?.to_string(),
+                false => format!("{name}/{}", name_of(Path::new(&file_name))?),
+            };
+
+            // A symlink is packed as what it points at.
+            let metadata = fs::metadata(entry.path()).map_err(|error| Error::read(&dir, error))?;
+            if metadata.is_dir() {
+                if exclusions.excludes(&name, true) && !exclusions.keeps_files() {
+                    continue;
+                }
+                self.walk(&name, exclusions, visited, files)?;
+            } else if metadata.is_file() && !exclusions.excludes(&name, false) {
+                files.push((name, entry.path()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Where a file of the tree goes in the bundle.
+    fn name(&self, name: &str) -> String {
+        match self.into.trim_matches('/') {
+            "" => name.to_string(),
+            into => format!("{into}/{name}"),
+        }
+    }
+}
+
+/// Whether two paths name the same file, which is not the same as the same
+/// spelling of it.
+fn same_file(one: &Path, other: &Path) -> bool {
+    match (fs::canonicalize(one), fs::canonicalize(other)) {
+        (Ok(one), Ok(other)) => one == other,
+        _ => false,
     }
 }
 
@@ -1814,5 +1966,122 @@ mod tests {
             Executable::new("one-binary", "arm64").named("test-server"),
         );
         assert_eq!(shared.validate(), Ok(()));
+    }
+
+    /// A directory tree to pack: a script server with its library, its data and
+    /// the files the format leaves out.
+    fn tree(dir: &Path) -> PathBuf {
+        let tree = dir.join("tree");
+        let write = |name: &str, text: &str| {
+            let path = tree.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, text).unwrap();
+        };
+
+        write("index.js", "console.log('hi')");
+        write("lib/util.js", "export const x = 1");
+        write("assets/logo.txt", "logo");
+        write("notes.md", "# notes");
+        write("README.md", "# readme");
+        write("debug.log", "a log, which the format leaves out");
+        write("node_modules/.cache/x", "left out");
+        write("node_modules/left-pad/index.js", "kept");
+        write(".mcpbignore", "*.md\n!README.md\n");
+
+        tree
+    }
+
+    fn names(bundle: &Path) -> Vec<String> {
+        let mut names = Bundle::open(bundle)
+            .unwrap()
+            .entries()
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_tree_is_packed_as_it_is_laid_out() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let tree = tree(dir.path());
+
+        let mut spec = spec(Platform::Linux, binary);
+        spec.trees = vec![Tree::new(&tree).in_dir("server")];
+
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+
+        assert_eq!(
+            names(&bundle),
+            vec![
+                "manifest.json",
+                "server/README.md",
+                "server/assets/logo.txt",
+                "server/index.js",
+                "server/lib/util.js",
+                "server/node_modules/left-pad/index.js",
+                "server/test-server",
+            ],
+            "the ignore file leaves out *.md but takes README.md back in"
+        );
+
+        let bundle = Bundle::open(&bundle).unwrap();
+        let index = bundle
+            .entries()
+            .iter()
+            .find(|entry| entry.name == "server/index.js")
+            .unwrap();
+        assert!(index.executable, "a tree of programs is written as one");
+    }
+
+    #[test]
+    fn a_tree_of_data_is_written_as_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(data.join("deep")).unwrap();
+        fs::write(data.join("deep/data.json"), b"{}").unwrap();
+
+        let mut spec = spec(Platform::Linux, binary);
+        spec.trees = vec![Tree::data(&data).in_dir("")];
+
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+
+        assert_eq!(
+            names(&bundle),
+            vec!["deep/data.json", "manifest.json", "server/test-server"]
+        );
+        let bundle = Bundle::open(&bundle).unwrap();
+        let data = bundle
+            .entries()
+            .iter()
+            .find(|entry| entry.name == "deep/data.json")
+            .unwrap();
+        assert!(!data.executable);
+    }
+
+    #[test]
+    fn a_tree_may_not_overwrite_what_the_bundle_already_writes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let tree = tree(dir.path());
+
+        let mut spec = spec(Platform::Linux, binary);
+        // The tree holds a `manifest.json` of its own at the root.
+        fs::write(tree.join("manifest.json"), b"{}").unwrap();
+        spec.trees = vec![Tree::new(&tree).in_dir("")];
+
+        let error = spec.pack(&dir.path().join("out.mcpb")).unwrap_err();
+        assert!(
+            error.to_string().contains("would overwrite manifest.json"),
+            "{error}"
+        );
     }
 }

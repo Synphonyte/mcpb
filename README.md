@@ -87,7 +87,8 @@ my-server-1.2.3-darwin-arm64-win32-x64.mcpb
 │   ├── my-server                  # the first platform's binary, mode 755
 │   ├── my-server-win32.exe        # every further platform's, mode 755
 │   ├── helper                     # `extra_executables`, mode 755
-│   └── THIRD-PARTY-NOTICES.md     # `resources`, mode 644
+│   ├── THIRD-PARTY-NOTICES.md     # `resources`, mode 644
+│   └── lib/…                      # `trees`, laid out as they are on disk
 └── mcpb-resources/
     └── de-DE.json                 # `localization`, mode 644
 ```
@@ -105,12 +106,36 @@ read only that field show. Each platform of the bundle starts its own binary: th
 `entry_point` is the first platform's file and every other platform overrides the command, unless
 the spec gives that platform a wrapper of its own to run.
 
+What a server needs beside it that is more than a file - data files, packages, the assets of a script
+it runs - is a [`Tree`]: a directory packed as it is laid out, into `server/` or anywhere else in
+the bundle. A tree is packed without what the format leaves out anyway (`.git/`, `*.log`,
+`node_modules/.cache/`, lockfiles, `.mcpbignore` …) and without what the `.mcpbignore` at its root
+names. [`Tree::new`] writes its files as programs, `Tree::data` as files to read, and
+`Tree::in_dir` puts them somewhere other than `server/`:
+
+```rust,no_run
+# fn main() -> Result<(), mcpb::Error> {
+# let mut spec = mcpb::BundleSpec { name: "my-server".into(), version: "1.2.3".parse()?,
+#     description: "What the server does.".into(), author: mcpb::Author::new("Me"),
+#     executables: Default::default(), ..mcpb::BundleSpec::default() };
+spec.trees = vec![
+    // What the server runs, next to the binary.
+    mcpb::Tree::new("server-files"),
+    // The data it reads, into `server/data/`.
+    mcpb::Tree::data("data").in_dir("server/data"),
+];
+# Ok(())
+# }
+```
+
 `pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
 partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a
 `Cursor` over a `Vec` in memory. Both write the entries in a fixed order with a fixed timestamp, so
-the same spec packs to the same bytes every time. It refuses two different files that would share a
-name in the zip; the same file used twice, as the plain icon and as an icon variant, is written
-once.
+the same spec packs to the same bytes every time - the files are sorted by their name in the bundle,
+whatever order the directory they came from listed them in. It refuses two different files that
+would share a name in the zip; the same file used twice, as the plain icon and as an icon variant, is
+written once. Neither packs the bundle it is writing, so a bundle written into a directory it packs
+does not pack the previous one.
 
 What went wrong comes back as an [`mcpb::Error`](Error): `Invalid` for the problems `validate`
 reports, and then the file that could not be read or the bundle that could not be written.

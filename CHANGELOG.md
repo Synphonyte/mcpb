@@ -64,6 +64,12 @@ All notable changes to this crate are documented here. It follows
   for the signature a bundle may carry after its zip; `extract_to` unpacks it,
   refusing a name that would leave the directory. A file that is no zip, or a
   zip without a `manifest.json`, is refused as `Error::Bundle`.
+- `BundleSpec::trees` (`Tree`): a directory packed as it is laid out, into
+  `server/` or anywhere else in the bundle, minus the format's own exclusions
+  and the lines of a `.mcpbignore` at its root (the `.gitignore` subset:
+  comments, `!`, `*`, `?`, `**`, a trailing `/` for a directory, a pattern
+  without a slash matching at any depth). `Tree::new` writes its files as
+  programs and `Tree::data` as files to read; `.mcpbignore` itself is left out.
 - `BundleSpec::from_manifest` reads any manifest into a spec and
   `BundleSpec::in_dir` joins the paths it names onto a directory, so a bundle
   can be read, edited and written again; `BundleSpec` is `Serialize` and
@@ -102,6 +108,10 @@ All notable changes to this crate are documented here. It follows
   argument now - it names every platform with its architecture, such as
   `<name>-<version>-darwin-arm64-win32-x64.mcpb` - and `entry_point` returns
   `Option<String>`, the first platform's binary.
+- The files of a bundle are sorted by their name in it, so the same spec packs
+  the same bytes whatever order a packed directory listed them in, and neither
+  `pack` nor `pack_to` packs the bundle it is writing.
+- `validate` refuses a tree that goes into a path that is not inside the bundle.
 - `validate` also refuses an author without a name, an email or a URL that does
   not look like one, an empty `long_description` or `license`, repeated
   keywords, a `_meta` namespace that holds no object, and a `user_config` entry

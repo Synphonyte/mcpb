@@ -43,6 +43,15 @@ impl BundleSpec {
                 }
             }
         }
+        for tree in &self.trees {
+            if !tree.into.is_empty() && !tree.into.split('/').all(is_name) {
+                problems.push(format!(
+                    "the tree {} goes into {:?}, which is not a path inside the bundle",
+                    tree.path.display(),
+                    tree.into
+                ));
+            }
+        }
         // One binary may serve several platforms, but two of them may not be
         // written under one name.
         let mut written: BTreeMap<String, &PathBuf> = BTreeMap::new();

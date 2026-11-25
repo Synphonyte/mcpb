@@ -53,12 +53,10 @@ last two are about the crate and its release.
   official JSON schema (`tests/manifest.rs`), with the schema vendored in `tests/schemas/` and
   `jsonschema` as a dev-dependency. The CI job that packs a bundle per platform also runs the real
   `mcpb validate` over the artifact.
-- [ ] Pack a directory tree instead of single files: `.mcpbignore` plus the CLI's default
-  exclusion list (`.git`, `.DS_Store`, `node_modules/.cache`, `*.map`, lockfiles, …) and nested
-  paths. `BundleSpec::files` deals in single files addressed by their own file name, placed under
-  `server/` or at the root. This is also what node, python and `uv` servers need, which would mean
-  supporting more than the `binary` server type — a separate decision, since the crate's point is
-  that there is no runtime to ship.
+- [x] Pack a directory tree instead of single files: `BundleSpec::trees` (`Tree`), packed with the
+  CLI's default exclusion list, the lines of a `.mcpbignore` at the directory's root, and nested
+  paths. What a node, python or `uv` server would still need is a server type other than `binary` —
+  a separate decision, since the crate's point is that there is no runtime to ship.
 - [ ] Read a bundle back (`mcpb info`): size, manifest, signature state. Useful on its own for
   checking what a release actually contains.
 - [ ] `sign` / `verify` / `unsign`: a PKCS#7 SignedData trailer after the zip — the zip bytes, then
