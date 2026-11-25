@@ -94,6 +94,10 @@ All notable changes to this crate are documented here. It follows
 
 ### Changed
 
+- **Migrating:** a spec now reads `Author::new("…")`, `Executable::new(path, arch)`
+  (`.named("…")` if the binary is not named after the bundle), `UserConfig::directory("key", …)`
+  in `user_config`, `version: "1.2.3".parse()?`, and `?` on `mcpb::Error`;
+  `..BundleSpec::default()` covers the rest.
 - **Breaking:** `BundleSpec` has the new fields `long_description`, `repository`,
   `homepage`, `documentation`, `support`, `license`, `keywords`,
   `privacy_policies`, `screenshots`, `tools_generated`, `prompts_generated`,
