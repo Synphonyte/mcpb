@@ -1,0 +1,41 @@
+name: Upstream specs
+
+# Once a week, checks the specifications this crate follows for changes since
+# the versions pinned in .github/upstream-specs.json:
+#
+# - the MCP Bundle manifest format (modelcontextprotocol/mcpb), which the crate
+#   writes and validates, and whose schema tests/schemas vendors
+# - the MCP protocol (modelcontextprotocol/modelcontextprotocol), whose released
+#   versions the servers this crate packs speak
+#
+# A new release tag or a commit touching the spec files opens an issue labelled
+# `upstream-spec` with the commits and a link to the full diff, one per spec;
+# a later change updates that issue and comments on it instead of opening
+# another. After bringing the crate in step, move the pins with
+#
+#     .github/scripts/check-upstream-specs.sh --bump
+#
+# and commit the file; the next run closes the issue. The same script without
+# arguments prints what changed, without touching any issue.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-specs
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: .github/scripts/check-upstream-specs.sh --issues
+        env:
+          GH_TOKEN: ${{ github.token }}
