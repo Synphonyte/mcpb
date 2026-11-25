@@ -154,3 +154,112 @@ fn a_command_it_does_not_have_says_so() {
     assert!(output.status.success());
     assert!(text(&output).contains("mcpb pack"), "{}", text(&output));
 }
+
+#[test]
+fn it_packs_one_platform_with_a_binary_from_elsewhere() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let example = example(&dir.path().join("example"));
+    // Where cargo puts the binary, not where the manifest says it is.
+    let built = example.join("target/release/calculator");
+    fs::create_dir_all(built.parent().expect("a parent")).expect("the directory");
+    fs::write(&built, "\x7fELF built by cargo").expect("the binary");
+    fs::remove_file(example.join("server/mcp-calculator")).expect("removed");
+
+    let bundle = dir.path().join("linux.mcpb");
+    let output = mcpb(&[
+        "pack",
+        example.to_str().expect("UTF-8"),
+        "--platform",
+        "linux",
+        "--arch",
+        "x64",
+        "--executable",
+        "target/release/calculator",
+        "-o",
+        bundle.to_str().expect("UTF-8"),
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+
+    let bundle = mcpb::Bundle::open(&bundle).expect("the bundle");
+    assert_eq!(
+        bundle.manifest()["compatibility"]["platforms"],
+        serde_json::json!(["linux"])
+    );
+    assert_eq!(bundle.entry_point(), Some("server/mcp-calculator"));
+    let entry = bundle
+        .entries()
+        .iter()
+        .find(|entry| entry.name == "server/mcp-calculator")
+        .expect("the binary is packed");
+    assert_eq!(entry.size, "\x7fELF built by cargo".len() as u64);
+    assert!(entry.executable);
+}
+
+#[test]
+fn it_names_a_bundle_after_the_one_platform() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    example(&dir.path().join("example"));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mcpb"))
+        .args(["pack", "example", "--platform", "darwin", "--arch", "arm64"])
+        .current_dir(dir.path())
+        .output()
+        .expect("the binary runs");
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        dir.path()
+            .join("calculator-rust-1.0.0-darwin-arm64.mcpb")
+            .is_file(),
+        "{}",
+        text(&output)
+    );
+
+    // A directory to write to is named into, too.
+    fs::create_dir(dir.path().join("dist")).expect("the directory");
+    let output = Command::new(env!("CARGO_BIN_EXE_mcpb"))
+        .args(["pack", "example", "--platform", "linux", "--arch", "x64"])
+        .args(["-o", "dist"])
+        .current_dir(dir.path())
+        .output()
+        .expect("the binary runs");
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        dir.path()
+            .join("dist/calculator-rust-1.0.0-linux-x64.mcpb")
+            .is_file(),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn a_platform_or_executable_it_cannot_use_says_so() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let example = example(&dir.path().join("example"));
+    let example = example.to_str().expect("UTF-8");
+
+    // The manifest names darwin and linux.
+    let output = mcpb(&["pack", example, "--platform", "win32"]);
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("names no such platform"),
+        "{}",
+        text(&output)
+    );
+
+    let output = mcpb(&["pack", example, "--platform", "windows"]);
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("none of darwin, linux and win32"),
+        "{}",
+        text(&output)
+    );
+
+    let output = mcpb(&["pack", example, "--executable", "server/mcp-calculator"]);
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("--executable needs --platform"),
+        "{}",
+        text(&output)
+    );
+}

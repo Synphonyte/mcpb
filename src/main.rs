@@ -5,13 +5,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use mcpb::{Bundle, BundleSpec, Error, Tree};
+use mcpb::{Bundle, BundleSpec, Error, Platform, Tree};
 
 const USAGE: &str = "\
 mcpb - pack, validate and inspect MCP Bundles (.mcpb)
 
 usage:
   mcpb pack <manifest.json | directory> [-o <bundle.mcpb>] [--arch <arch>]
+                                        [--platform <platform>] [--executable <file>]
                                         [--tree <dir>]... [--data <dir>]...
   mcpb validate <manifest.json | directory | bundle.mcpb>
   mcpb info <bundle.mcpb>
@@ -21,8 +22,15 @@ pack:
   relative to it, and the bundle is named after the spec
   (<name>-<version>-<platform>-<arch>.mcpb) unless -o says where to put it.
 
-  -o, --out <path>   where to write the bundle
+  -o, --out <path>   where to write the bundle, or the directory to write it to
       --arch <arch>  the CPU architecture of the binaries, such as arm64
+      --platform <platform>
+                     pack only this platform (darwin, linux or win32) of those
+                     the manifest names, as a build for one OS does
+      --executable <file>
+                     the binary to pack as the entry point, such as
+                     target/release/my-server, instead of the file the manifest
+                     names; needs --platform when the manifest names several
       --tree <dir>   the files of <dir>, packed into server/ as they are laid out
                      and written as programs - `--tree server` for a directory of
                      that name; relative to the manifest, as its paths are
@@ -87,6 +95,8 @@ enum Command {
         manifest: PathBuf,
         out: Option<PathBuf>,
         arch: Option<String>,
+        platform: Option<Platform>,
+        executable: Option<PathBuf>,
         trees: Vec<Tree>,
     },
     Validate(PathBuf),
@@ -111,8 +121,10 @@ fn run(args: Vec<String>) -> Result<Option<String>, Failure> {
                     manifest,
                     out,
                     arch,
+                    platform,
+                    executable,
                     trees,
-                } => pack(&manifest, out, arch, trees).map(Some),
+                } => pack(&manifest, out, arch, platform, executable, trees).map(Some),
                 Command::Validate(path) => validate(&path),
                 Command::Info(path) => info(&path).map(Some),
             }
@@ -124,6 +136,8 @@ fn parse(command: &str, args: &[String]) -> Result<Command, Failure> {
     let mut positional = Vec::new();
     let mut out = None;
     let mut arch = None;
+    let mut platform = None;
+    let mut executable = None;
     let mut trees = Vec::new();
 
     let mut args = args.iter();
@@ -137,6 +151,15 @@ fn parse(command: &str, args: &[String]) -> Result<Command, Failure> {
         match arg.as_str() {
             "-o" | "--out" => out = Some(PathBuf::from(value(arg)?)),
             "--arch" => arch = Some(value(arg)?),
+            "--platform" => {
+                let name = value(arg)?;
+                platform = Some(Platform::parse(&name).ok_or_else(|| {
+                    Failure::Usage(format!(
+                        "--platform {name} is none of darwin, linux and win32"
+                    ))
+                })?);
+            }
+            "--executable" => executable = Some(PathBuf::from(value(arg)?)),
             "--tree" => trees.push(Tree::new(value(arg)?)),
             "--data" => trees.push(Tree::data(value(arg)?)),
             flag if flag.starts_with('-') => {
@@ -162,6 +185,8 @@ fn parse(command: &str, args: &[String]) -> Result<Command, Failure> {
                 manifest,
                 out,
                 arch,
+                platform,
+                executable,
                 trees,
             }
         }
@@ -194,6 +219,8 @@ fn pack(
     manifest: &Path,
     out: Option<PathBuf>,
     arch: Option<String>,
+    platform: Option<Platform>,
+    executable: Option<PathBuf>,
     trees: Vec<Tree>,
 ) -> Result<String, Failure> {
     let dir = base_dir(manifest);
@@ -204,6 +231,32 @@ fn pack(
     };
 
     let mut spec = read_manifest(&path)?.in_dir(&dir);
+    if let Some(platform) = platform {
+        if !spec.executables.contains_key(&platform) {
+            return Err(Failure::Usage(format!(
+                "--platform {}: {} names no such platform in compatibility.platforms",
+                platform.as_str(),
+                path.display()
+            )));
+        }
+        // A binary only runs on the OS it was built for, so the bundle claims
+        // that platform alone, and drops the others' overrides with them.
+        spec.executables.retain(|other, _| *other == platform);
+        spec.platform_overrides
+            .retain(|other, _| *other == platform);
+    }
+    if let Some(executable) = executable {
+        let mut executables = spec.executables.values_mut();
+        match (executables.next(), executables.next()) {
+            (Some(only), None) => only.path = dir.join(executable),
+            _ => {
+                return Err(Failure::Usage(
+                    "--executable needs --platform, since the manifest names several platforms"
+                        .to_string(),
+                ));
+            }
+        }
+    }
     if let Some(arch) = arch {
         for executable in spec.executables.values_mut() {
             executable.arch = Some(arch.clone());
@@ -216,6 +269,7 @@ fn pack(
     }));
 
     let out = match out {
+        Some(dir) if dir.is_dir() => dir.join(spec.file_name()),
         Some(out) => out,
         None => PathBuf::from(spec.file_name()),
     };

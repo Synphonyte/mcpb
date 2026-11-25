@@ -168,3 +168,47 @@ jobs:
             npx -y @anthropic-ai/mcpb@latest unpack "$bundle" "unpacked-$name"
             npx -y @anthropic-ai/mcpb@latest validate "unpacked-$name"
           done
+  # What a user of the template gets: the template's server built and packed by
+  # this repository's GitHub Action, on each OS the action supports. The action
+  # is built from this checkout, not downloaded, so it tests this change.
+  template:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: template
+
+      - name: Check and build the template's server
+        shell: bash
+        working-directory: template
+        run: |
+          cargo fmt --check
+          cargo clippy --locked -- -D warnings
+          cargo build --release --locked
+
+      - uses: ./
+        id: mcpb
+        with:
+          manifest: template/manifest.json
+          executable: template/target/release/my-server
+          out: target/bundles/
+          mcpb-version: source
+
+      - name: Check the bundle with the official CLI
+        shell: bash
+        run: |
+          bundle="${{ steps.mcpb.outputs.bundle }}"
+          case "$bundle" in
+            *-linux-*|*-darwin-*|*-win32-*) ;;
+            *) echo "::error::$bundle is not named after one platform"; exit 1 ;;
+          esac
+          npx -y @anthropic-ai/mcpb@latest unpack "$bundle" unpacked
+          npx -y @anthropic-ai/mcpb@latest validate unpacked
