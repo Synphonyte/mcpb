@@ -11,6 +11,10 @@ All notable changes to this crate are documented here. It follows
 - A screenshot whose path is also one of `BundleSpec::files` is written, and
   named in the manifest, where that `BundleFile` puts it, such as
   `assets/shot.png`; a manifest's nested screenshots read back that way.
+- Icons are placed the same way: an `icon` or `icons` entry whose path is also
+  one of `BundleSpec::files` is written, and named in the manifest (`icon` and
+  `icons[].src`), where that file puts it; a manifest's nested icons read back
+  that way, an icon named twice placed once.
 - CI tests and packs on the `ubuntu-24.04-arm` and `windows-11-arm` runners, so
   Linux and Windows arm64 are covered.
 

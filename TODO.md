@@ -21,7 +21,7 @@ last two are about the crate and its release.
   the manifest points; the first icon without a theme is also written as the plain `icon`.
 - [x] `screenshots`, written to the bundle's root under their own names like the icons, or below
   it where a `BundleFile` of the same path puts them (`assets/shot.png`); a manifest's nested
-  screenshot reads back that way. Icons are still root-only.
+  screenshot reads back that way. Icons are placed the same way.
 - [x] `localization`: `default_locale` and the per-locale files in the bundle. `resources` is fixed
   to `mcpb-resources/${locale}.json`; a path of the caller's choosing would need a field.
 - [x] `_meta` as raw JSON: `BundleSpec::meta`, a map from reverse-DNS namespace to the object the

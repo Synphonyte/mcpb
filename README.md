@@ -116,7 +116,7 @@ Rust program as well, so a release check can be a few lines instead of a session
 ```text
 my-server-1.2.3-darwin-arm64-win32-x64.mcpb
 ├── manifest.json                  # written from the spec
-├── icon.png                       # `icon`, at the root, where clients look for it
+├── icon.png                       # `icon`, at the root unless a `BundleFile` places it
 ├── screenshot.png                 # `screenshots`, likewise
 ├── server/
 │   ├── my-server                  # the first platform's binary, mode 755
@@ -167,9 +167,9 @@ spec.trees = vec![
 # }
 ```
 
-A single file goes wherever a [`BundleFile`] names it, such as `server/lib/libcalculator.dylib`. A
-screenshot whose path is also a `BundleFile` is written there, and the manifest names it there, such
-as `assets/shot.png`; any other screenshot goes to the bundle's root.
+A single file goes wherever a [`BundleFile`] names it, such as `server/lib/libcalculator.dylib`. An
+icon or a screenshot whose path is also a `BundleFile` is written there, and the manifest names it
+there, such as `assets/icon.png`; any other goes to the bundle's root.
 
 `pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
 partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a

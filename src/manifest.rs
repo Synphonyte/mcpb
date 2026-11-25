@@ -80,13 +80,7 @@ impl BundleSpec {
             // A manifest names files, never directories: what a tree packed
             // reads back as the files it holds, next to the server.
             trees: Vec::new(),
-            // A screenshot below the root keeps its place through a file that
-            // puts it there; one at the root needs none.
-            files: texts(root.get("screenshots"), "screenshots")?
-                .into_iter()
-                .filter(|name| name.contains('/'))
-                .map(|name| BundleFile::data(&name, &name))
-                .collect(),
+            files: placed(root)?,
             icon: text_opt(root.get("icon"), "icon")?.map(PathBuf::from),
             icons: icons(root.get("icons"))?,
             screenshots: texts(root.get("screenshots"), "screenshots")?
@@ -306,6 +300,26 @@ fn overrides(value: Option<&Value>) -> Result<BTreeMap<Platform, PlatformConfig>
     }
 
     Ok(configs)
+}
+
+/// An icon or a screenshot below the bundle's root keeps its place through a
+/// file that puts it there; one at the root needs none.
+fn placed(root: &Map<String, Value>) -> Result<Vec<BundleFile>, Error> {
+    let mut names: Vec<String> = text_opt(root.get("icon"), "icon")?.into_iter().collect();
+    names.extend(
+        icons(root.get("icons"))?
+            .into_iter()
+            .map(|icon| icon.path.to_string_lossy().into_owned()),
+    );
+    names.extend(texts(root.get("screenshots"), "screenshots")?);
+
+    let mut files: Vec<BundleFile> = Vec::new();
+    for name in names {
+        if name.contains('/') && !files.iter().any(|file| file.name == name) {
+            files.push(BundleFile::data(&name, &name));
+        }
+    }
+    Ok(files)
 }
 
 fn icons(value: Option<&Value>) -> Result<Vec<Icon>, Error> {
@@ -626,17 +640,24 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_screenshot_reads_back_in_its_place() {
+    fn nested_icons_and_screenshots_read_back_in_their_place() {
         let mut manifest = binary("server/s");
         manifest["screenshots"] = serde_json::json!(["shot.png", "assets/wide.png"]);
+        manifest["icon"] = "assets/icon.png".into();
+        manifest["icons"] = serde_json::json!([
+            { "src": "assets/icon.png", "size": "512x512" },
+            { "src": "icon-dark.png", "size": "16x16", "theme": "dark" },
+        ]);
 
         let spec = BundleSpec::from_manifest(&manifest)
             .unwrap()
             .in_dir("/unpacked");
-        assert_eq!(
-            spec.manifest()["screenshots"],
-            serde_json::json!(["shot.png", "assets/wide.png"])
-        );
+        let written = spec.manifest();
+        for key in ["screenshots", "icon", "icons"] {
+            assert_eq!(written[key], manifest[key], "{key}");
+        }
+        // The icon named twice is placed once.
+        assert_eq!(spec.files.len(), 2, "{:?}", spec.files);
     }
 
     #[test]

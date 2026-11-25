@@ -370,7 +370,8 @@ impl UserConfig {
 /// An icon of the bundle, with the size clients should show it at.
 #[derive(Clone, Debug)]
 pub struct Icon {
-    /// The PNG file, written to the root of the bundle under its own name.
+    /// The PNG file, written to the root of the bundle under its own name, or
+    /// where a [`BundleSpec::files`] entry of the same path puts it.
     pub path: PathBuf,
     /// The size it is drawn at, such as `128x128`.
     pub size: String,
@@ -674,11 +675,13 @@ pub struct BundleSpec {
     pub trees: Vec<Tree>,
     /// Single files written under a name of their own - see [`BundleFile`].
     pub files: Vec<BundleFile>,
-    /// The bundle's icon, a PNG written to the root of the bundle.
+    /// The bundle's icon, a PNG written to the root of the bundle - or, when its
+    /// path is also one of [`Self::files`], under that file's name, such as
+    /// `assets/icon.png`.
     pub icon: Option<PathBuf>,
-    /// Further icons, for sizes and themes. The first one without a theme is
-    /// also written as the manifest's `icon`, so clients that only read that
-    /// field show an icon as well.
+    /// Further icons, for sizes and themes, placed as [`Self::icon`] is. The
+    /// first one without a theme is also written as the manifest's `icon`, so
+    /// clients that only read that field show an icon as well.
     pub icons: Vec<Icon>,
     /// What the extension looks like, written to the root of the bundle under
     /// their own file names - or, for a screenshot whose path is also one of
@@ -754,14 +757,15 @@ impl Default for BundleSpec {
 }
 
 impl Icon {
-    fn to_manifest(&self) -> Option<Value> {
+    /// The manifest's entry for the icon, which the bundle holds as `name`.
+    fn to_manifest(&self, name: &str) -> Value {
         let mut icon = Map::new();
-        icon.insert("src".to_string(), json!(archive_name(&self.path)?));
+        icon.insert("src".to_string(), json!(name));
         icon.insert("size".to_string(), json!(self.size));
         if let Some(theme) = &self.theme {
             icon.insert("theme".to_string(), json!(theme));
         }
-        Some(Value::Object(icon))
+        Value::Object(icon)
     }
 }
 
@@ -873,14 +877,21 @@ impl BundleSpec {
             manifest["icon"] = json!(icon);
         }
         if !self.icons.is_empty() {
-            manifest["icons"] =
-                Value::Array(self.icons.iter().filter_map(Icon::to_manifest).collect());
+            manifest["icons"] = Value::Array(
+                self.icons
+                    .iter()
+                    .filter_map(|icon| {
+                        self.bundle_name(&icon.path)
+                            .map(|name| icon.to_manifest(name))
+                    })
+                    .collect(),
+            );
         }
         if !self.screenshots.is_empty() {
             manifest["screenshots"] = Value::Array(
                 self.screenshots
                     .iter()
-                    .filter_map(|path| self.screenshot_name(path).map(|name| json!(name)))
+                    .filter_map(|path| self.bundle_name(path).map(|name| json!(name)))
                     .collect(),
             );
         }
@@ -951,24 +962,33 @@ impl BundleSpec {
         Value::Object(config)
     }
 
-    /// Where a screenshot goes in the bundle: where a [`BundleFile`] of the same
-    /// path puts it, or else the root, under its own name.
-    pub(crate) fn screenshot_name<'a>(&'a self, path: &'a Path) -> Option<&'a str> {
-        match self.files.iter().find(|file| file.path == path) {
+    /// Where an icon or a screenshot goes in the bundle, which is what the
+    /// manifest points at: where a [`BundleFile`] of the same path puts it, or
+    /// else the root, under its own name.
+    fn bundle_name<'a>(&'a self, path: &'a Path) -> Option<&'a str> {
+        match self.placed(path) {
             Some(file) => Some(&file.name),
             None => archive_name(path),
         }
     }
 
+    /// The [`BundleFile`] that puts the file at `path` somewhere of its own.
+    fn placed(&self, path: &Path) -> Option<&BundleFile> {
+        self.files.iter().find(|file| file.path == path)
+    }
+
     /// The icon the manifest's single `icon` field shows: the one the spec
     /// names, or else the first icon that is not tied to a theme.
     fn manifest_icon(&self) -> Option<&str> {
-        self.icon.as_deref().and_then(archive_name).or_else(|| {
-            self.icons
-                .iter()
-                .find(|icon| icon.theme.is_none())
-                .and_then(|icon| archive_name(&icon.path))
-        })
+        self.icon
+            .as_deref()
+            .and_then(|path| self.bundle_name(path))
+            .or_else(|| {
+                self.icons
+                    .iter()
+                    .find(|icon| icon.theme.is_none())
+                    .and_then(|icon| self.bundle_name(&icon.path))
+            })
     }
 
     /// The bundle's file name. For one platform
@@ -1133,14 +1153,12 @@ impl BundleSpec {
         }
 
         // Icons, screenshots and translations keep the places the manifest
-        // points at.
-        for icon in self.icon_files() {
-            files.push((name_of(icon)?.to_string(), icon.to_path_buf(), PLAIN));
-        }
-        for screenshot in &self.screenshots {
-            // A screenshot that a `BundleFile` places is written there, below.
-            if !self.files.iter().any(|file| &file.path == screenshot) {
-                files.push((name_of(screenshot)?.to_string(), screenshot.clone(), PLAIN));
+        // points at. An icon or a screenshot that a `BundleFile` places is
+        // written there, with the files below.
+        let screenshots = self.screenshots.iter().map(PathBuf::as_path);
+        for path in self.icon_files().chain(screenshots) {
+            if self.placed(path).is_none() {
+                files.push((name_of(path)?.to_string(), path.to_path_buf(), PLAIN));
             }
         }
         if let Some(localization) = &self.localization {
@@ -1848,6 +1866,60 @@ mod tests {
         );
 
         spec.validate().unwrap();
+    }
+
+    #[test]
+    fn an_icon_goes_where_a_bundle_file_puts_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let plain = png(dir.path(), "icon.png");
+        let dark = png(dir.path(), "icon-dark.png");
+
+        let mut spec = spec(Platform::Linux, binary);
+        spec.icon = Some(plain.clone());
+        spec.icons = vec![
+            Icon {
+                path: plain.clone(),
+                size: "512x512".to_string(),
+                theme: None,
+            },
+            Icon {
+                path: dark.clone(),
+                size: "512x512".to_string(),
+                theme: Some("dark".to_string()),
+            },
+        ];
+        spec.files = vec![BundleFile::data(&plain, "assets/icon.png")];
+
+        let manifest = spec.manifest();
+        assert_eq!(manifest["icon"], "assets/icon.png");
+        assert_eq!(
+            manifest["icons"],
+            json!([
+                { "src": "assets/icon.png", "size": "512x512" },
+                { "src": "icon-dark.png", "size": "512x512", "theme": "dark" },
+            ])
+        );
+
+        let bundle = dir.path().join("out.mcpb");
+        spec.pack(&bundle).unwrap();
+        let mut names = crate::Bundle::open(&bundle)
+            .unwrap()
+            .entries()
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "assets/icon.png",
+                "icon-dark.png",
+                "manifest.json",
+                "server/test-server"
+            ]
+        );
     }
 
     #[test]
