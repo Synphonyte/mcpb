@@ -66,7 +66,8 @@ binary only runs where it was built: the manifest can switch the command per ope
 not per CPU architecture, so each OS/architecture is its own bundle. Give `executables` several
 platforms and the bundle starts each platform's own binary through `platform_overrides`;
 `BundleSpec::file_name` names the bundle after them, the way the releases do. The crate needs Rust
-1.85 or later, since it is edition 2024.
+1.85 or later, since it is edition 2024; `Cargo.lock` is committed and CI runs `cargo test --locked`
+on 1.85, so that promise is checked against the versions that were tested.
 
 Everything but the name, the version, the description, the author, the platform and the executable
 has a default, so `..BundleSpec::default()` keeps a spec to what it says. The version is a

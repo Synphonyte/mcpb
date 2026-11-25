@@ -95,9 +95,9 @@ last two are about the crate and its release.
   example that is a doctest. The README is the crate's documentation (`#![doc = include_str!]`), so
   `cargo test` compiles its example.
 - [x] CI packs a bundle: `examples/pack.rs` packs the example binary (or one you point it at, with `--executable` and `--arch`), and a job on each of the three platforms unpacks the result and has the official CLI validate the manifest. On macOS it also packs the other Apple architecture from a cross-built binary. Arbitrary cross-compilation (Linux arm64, Windows arm64) would need other toolchains and is not there.
-- [ ] Prove the declared MSRV: `rust-version = "1.85"`, which edition 2024 needs. CI tests the
-  stable toolchain alone, and an MSRV job needs a committed `Cargo.lock`, since dependencies float
-  while the lockfile is ignored.
+- [x] Prove the declared MSRV: `rust-version = "1.85"`, which edition 2024 needs. `Cargo.lock` is
+  committed and every CI job runs with `--locked`, with an `msrv` job that runs `cargo test --locked`
+  on 1.85, so the promise is checked against the versions that were tested.
 - [x] Test against the spec's own examples, at least
   [`examples/calculator-rust`](https://github.com/modelcontextprotocol/mcpb/tree/main/examples/calculator-rust):
   its manifest is vendored in `tests/fixtures/`, and the tests check that the crate reads it,

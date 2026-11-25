@@ -112,6 +112,9 @@ All notable changes to this crate are documented here. It follows
   argument now - it names every platform with its architecture, such as
   `<name>-<version>-darwin-arm64-win32-x64.mcpb` - and `entry_point` returns
   `Option<String>`, the first platform's binary.
+- `Cargo.lock` is committed: the crate has a binary, and the CI job that tests
+  the declared MSRV (`rust-version = 1.85`) needs the versions that were tested
+  rather than whatever a dependency released today. Every CI job runs `--locked`.
 - The files of a bundle are sorted by their name in it, so the same spec packs
   the same bytes whatever order a packed directory listed them in, and neither
   `pack` nor `pack_to` packs the bundle it is writing.
