@@ -114,6 +114,33 @@ jobs:
           cargo build --quiet --example pack --target "$target"
           cargo run --quiet --example pack -- --executable "target/$target/debug/examples/pack" --arch "$arch"
 
+      # The `mcpb` binary reads a manifest of its own and packs a directory tree,
+      # which is what the example above cannot check: it writes its spec in Rust.
+      - name: Pack the reference manifest with the mcpb binary
+        shell: bash
+        run: |
+          dir=target/cli-bundle
+          rm -rf "$dir" && mkdir -p "$dir/server" "$dir/bundles"
+          cp tests/fixtures/calculator-rust.manifest.json "$dir/manifest.json"
+
+          exe=""; [ -f target/debug/examples/pack.exe ] && exe=.exe
+          cp "target/debug/examples/pack$exe" "$dir/server/mcp-calculator"
+          printf 'a library the binary loads\n' > "$dir/server/libcalculator.dylib"
+          printf '*.dylib\n' > "$dir/server/.mcpbignore"
+          printf 'a log, which the format leaves out\n' > "$dir/debug.log"
+
+          cargo run --locked --quiet --bin mcpb -- \
+            pack "$dir" --arch x64 --tree server -o "target/bundles/cli-reference.mcpb"
+
+          cargo run --locked --quiet --bin mcpb -- validate target/bundles/cli-reference.mcpb
+          cargo run --locked --quiet --bin mcpb -- info target/bundles/cli-reference.mcpb \
+            | tee target/cli-info.txt
+          grep -q 'server/mcp-calculator' target/cli-info.txt
+          if grep -q 'libcalculator' target/cli-info.txt; then
+            echo "the .mcpbignore of the packed directory did not apply"
+            exit 1
+          fi
+
       - name: Check every bundle with the official CLI
         shell: bash
         run: |
