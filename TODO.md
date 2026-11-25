@@ -106,12 +106,12 @@ last two are about the crate and its release.
 ## Publishing
 
 - [x] `mcpb` is reserved on crates.io with 0.1.0.
-- [ ] 0.1.0 cannot be replaced, only yanked, so treat the API as unstable: breaking changes bump
-  the minor version.
+- [x] 0.1.0 cannot be replaced, only yanked, so treat the API as unstable: breaking changes bump
+  the minor version. 0.2.0 is that bump, and the README says the API is not stable before 1.0.
 - [x] Publish from a tag in CI instead of from a working copy, so the release and the commit always
   match. `.github/workflows/release.yml` publishes on a `v<version>` tag through crates.io Trusted
   Publishing and creates the GitHub release from the changelog.
-- [ ] Allow that workflow to publish: crates.io → the crate → Settings → Trusted Publishing → add a
+- [x] Allow that workflow to publish: crates.io → the crate → Settings → Trusted Publishing → add a
   GitHub publisher for owner `Synphonyte`, repository `mcpb`, workflow `release.yml`.
 - [ ] Cut 0.2.0: date the changelog's `0.2.0` section, commit, tag `v0.2.0`, push, and watch the
   Release run publish the crate and open the release.
