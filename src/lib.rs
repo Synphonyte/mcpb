@@ -2,7 +2,10 @@
 // `cargo test`.
 #![doc = include_str!("../README.md")]
 
+mod bundle;
 mod validate;
+
+pub use bundle::{Bundle, Entry};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -64,6 +67,10 @@ impl Error {
             path: path.into(),
             source,
         }
+    }
+
+    fn write(source: std::io::Error) -> Self {
+        Self::Write { source }
     }
 }
 

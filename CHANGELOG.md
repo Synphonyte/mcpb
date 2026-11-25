@@ -29,9 +29,9 @@ All notable changes to this crate are documented here. It follows
 - `BundleSpec::pack_to` writes the bundle to any `Write + Seek`, such as a `Cursor` over a `Vec`,
   and hands it back; `pack` writes it to a path through the same code.
 - `pack`, `pack_to` and everything they call return `Error`, an enum that implements `Debug`,
-  `Display` and `std::error::Error` (`Invalid`, `Read`, `Write`, `Name`, `Icon`, `Clash`) instead of
-  a `String`, so callers can match on what went wrong and `?` it into their own error type - anyhow
-  included.
+  `Display` and `std::error::Error` (`Invalid`, `Version`, `Read`, `Write`, `Name`, `Icon`, `Clash`,
+  `Bundle`, `Unsafe`) instead of a `String`, so callers can match on what went wrong and `?` it into
+  their own error type - anyhow included.
 - `BundleSpec::executables`: one binary per platform the bundle runs on. A
   bundle of several platforms writes each binary (`<name>`, `<name>-<platform>`
   and `.exe` on Windows), declares every platform in
@@ -58,6 +58,12 @@ All notable changes to this crate are documented here. It follows
   platform alone.
 - `BundleSpec::platform_overrides` is only generated for a platform whose binary is a different file
   than `entry_point`, so a manifest that names one binary for several platforms stays as it is.
+- `Bundle::open` reads an existing `.mcpb` back - whatever packed it - for
+  `manifest`, `manifest_version`, `entry_point`, the `entries` with their sizes
+  and whether they are written as programs, the file's `size`, and `is_signed`
+  for the signature a bundle may carry after its zip; `extract_to` unpacks it,
+  refusing a name that would leave the directory. A file that is no zip, or a
+  zip without a `manifest.json`, is refused as `Error::Bundle`.
 - A test that checks every shape of manifest this crate writes against the
   manifest format's own JSON schema, vendored in `tests/schemas/`, so what
   clients accept is not only what our own tests expect.

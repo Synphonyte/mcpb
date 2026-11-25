@@ -115,6 +115,26 @@ once.
 What went wrong comes back as an [`mcpb::Error`](Error): `Invalid` for the problems `validate`
 reports, and then the file that could not be read or the bundle that could not be written.
 
+## Reading a bundle back
+
+[`Bundle::open`] reads a `.mcpb` that already exists - whatever packed it - for checking what a
+release actually contains:
+
+```rust,no_run
+let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
+println!("{} {}, signed: {}", bundle.manifest()["name"], bundle.manifest()["version"], bundle.is_signed());
+for entry in bundle.entries() {
+    println!("{:>9}  {}{}", entry.size, entry.name, if entry.executable { " *" } else { "" });
+}
+bundle.extract_to("dist/unpacked")?;
+# Ok::<(), mcpb::Error>(())
+```
+
+[`Bundle::manifest`] is the manifest as it was written, [`Bundle::entries`] the files with their
+sizes and whether they are written as programs, [`Bundle::is_signed`] whether a signature follows
+the zip (this crate signs neither way; sign with the `mcpb` CLI), and [`Bundle::extract_to`]
+unpacks them, refusing a name that would leave the directory.
+
 ## Checks
 
 `BundleSpec::validate` reports everything clients would refuse, and `pack` refuses to write such a
@@ -123,8 +143,8 @@ spec. It looks at the spec alone:
 - the name may only hold ASCII letters, digits, `-`, `_` and `.`, and cannot be `.` or `..`, since
   it names the executable and the bundle file
 - the version is a semantic version, which [`Version`] enforces before a spec can hold one
-- description, author and the directory prompt say something, and so do every tool's description
-  and every prompt's text
+- description, author and every `user_config` entry say something, and so do every tool's
+  description and every prompt's text
 - the author's email and the URLs (`author.url`, `homepage`, `documentation`, `support`,
   `repository.url`, `privacy_policies`) look like what they claim
 - a tool, a prompt and a prompt's arguments are each named once, as is every keyword, and a `_meta`
@@ -149,8 +169,8 @@ accept is checked rather than assumed from our own expectations.
 
 ## Not yet
 
-Signing (`mcpb sign`/`verify`). Bundles are unsigned, which `mcpb info` reports; sign them with the
-`mcpb` CLI after packing if you need a signature.
+Signing (`mcpb sign`/`verify`). Bundles are unsigned, which [`Bundle::is_signed`] reports; sign
+them with the `mcpb` CLI after packing if you need a signature.
 
 [TODO.md](TODO.md) is the full list, both of what the spec has and what the crate still needs to be
 useful on its own: more `user_config` kinds, the rest of the manifest's metadata fields, `_meta`,
