@@ -1,6 +1,7 @@
 //! What a [`BundleSpec`] has to get right before clients would accept it.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
 
 use serde_json::Value;
 
@@ -42,13 +43,19 @@ impl BundleSpec {
                 }
             }
         }
-        let mut executable_paths = HashSet::new();
-        for platform in self.executables.keys() {
+        // One binary may serve several platforms, but two of them may not be
+        // written under one name.
+        let mut written: BTreeMap<String, &PathBuf> = BTreeMap::new();
+        for (platform, executable) in &self.executables {
             let path = self.executable_path(*platform);
-            if !executable_paths.insert(path.clone()) {
-                problems.push(format!(
+            match written.get(&path) {
+                Some(other) if *other != &executable.path => problems.push(format!(
                     "two executables are written as {path:?}: give one of them a name of its own"
-                ));
+                )),
+                Some(_) => {}
+                None => {
+                    written.insert(path, &executable.path);
+                }
             }
         }
         if self.description.trim().is_empty() {

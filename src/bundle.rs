@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::{Error, MANIFEST_VERSION};
+use crate::{BundleSpec, Error, MANIFEST_VERSION, RESOURCES_DIR, SERVER_DIR};
 
 /// What ends a signed bundle, after the zip and the signature. This crate does
 /// not sign, so it only reports whether a bundle carries a signature.
@@ -131,6 +131,46 @@ impl Bundle {
     /// Whether the manifest is written in the format this crate writes.
     pub fn is_current(&self) -> bool {
         self.manifest_version() == Some(MANIFEST_VERSION)
+    }
+
+    /// The spec this bundle's manifest describes, with its paths relative to the
+    /// bundle's root as the manifest names them - see [`BundleSpec::in_dir`].
+    ///
+    /// What the manifest does not name is read from the files themselves: the
+    /// helpers and resources next to the server, which it only reaches by
+    /// running them, and the per-locale translations it points at as a whole.
+    pub fn spec(&self) -> Result<BundleSpec, Error> {
+        let mut spec = BundleSpec::from_manifest(&self.manifest)?;
+        let binaries: Vec<String> = spec
+            .executables
+            .keys()
+            .map(|platform| spec.executable_path(*platform))
+            .collect();
+
+        for entry in &self.entries {
+            if binaries.contains(&entry.name) {
+                continue;
+            }
+            if let Some(locale) = entry
+                .name
+                .strip_prefix(&format!("{RESOURCES_DIR}/"))
+                .and_then(|name| name.strip_suffix(".json"))
+            {
+                if let Some(localization) = &mut spec.localization {
+                    localization
+                        .locales
+                        .insert(locale.to_string(), PathBuf::from(&entry.name));
+                }
+            } else if entry.name.starts_with(&format!("{SERVER_DIR}/")) {
+                if entry.executable {
+                    spec.extra_executables.push(PathBuf::from(&entry.name));
+                } else {
+                    spec.resources.push(PathBuf::from(&entry.name));
+                }
+            }
+        }
+
+        Ok(spec)
     }
 
     /// Writes the bundle's files into `dir`, which is created. A file that
@@ -333,6 +373,49 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o755, "{mode:o}");
         }
+    }
+
+    #[test]
+    fn what_the_manifest_does_not_name_comes_back_from_the_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let helper = dir.path().join("helper");
+        fs::write(&helper, b"#!/bin/sh\n").unwrap();
+        let notice = dir.path().join("NOTICE");
+        fs::write(&notice, b"third-party notices").unwrap();
+        let german = dir.path().join("de-DE.json");
+        fs::write(&german, b"{}").unwrap();
+
+        let mut spec = BundleSpec {
+            name: "test-server".to_string(),
+            version: "1.2.3".parse().unwrap(),
+            description: "A test server.".to_string(),
+            author: Author::new("Test"),
+            executables: BTreeMap::from([(Platform::Linux, Executable::new(&binary, "arm64"))]),
+            extra_executables: vec![helper],
+            resources: vec![notice],
+            localization: Some(crate::Localization {
+                default_locale: "en-US".to_string(),
+                locales: BTreeMap::from([("de-DE".to_string(), german)]),
+            }),
+            ..BundleSpec::default()
+        };
+        spec.args = vec!["--notice".to_string()];
+
+        let path = dir.path().join(spec.file_name());
+        spec.pack(&path).unwrap();
+
+        let read = Bundle::open(&path).unwrap().spec().unwrap();
+        assert_eq!(read.extra_executables, vec![PathBuf::from("server/helper")]);
+        assert_eq!(read.resources, vec![PathBuf::from("server/NOTICE")]);
+        assert_eq!(
+            read.localization.as_ref().unwrap().locales["de-DE"],
+            PathBuf::from("mcpb-resources/de-DE.json")
+        );
+
+        // The manifest it writes of that is the one the bundle already has.
+        assert_eq!(read.manifest(), spec.manifest());
     }
 
     #[test]

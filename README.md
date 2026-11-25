@@ -135,6 +135,28 @@ sizes and whether they are written as programs, [`Bundle::is_signed`] whether a 
 the zip (this crate signs neither way; sign with the `mcpb` CLI), and [`Bundle::extract_to`]
 unpacks them, refusing a name that would leave the directory.
 
+## Editing a manifest
+
+[`BundleSpec::from_manifest`] turns any manifest into a spec, and `manifest()` writes it again, so a
+bundle can be read, changed and packed anew - the same bundle with a new version, say:
+
+```rust,no_run
+let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
+bundle.extract_to("dist/unpacked")?;
+
+// The manifest names the files; `in_dir` finds them where they were unpacked.
+let mut spec = bundle.spec()?.in_dir("dist/unpacked");
+spec.version = "1.2.4".parse()?;
+spec.pack(format!("dist/{}", spec.file_name()).as_ref())?;
+# Ok::<(), mcpb::Error>(())
+```
+
+What the manifest does not carry - the architecture of a binary, the helpers and resources next to
+the server, the locales - is what [`Bundle::spec`] reads from the files themselves;
+`from_manifest` alone leaves those empty, since a manifest does not name them. `BundleSpec` is also
+`Serialize` and `Deserialize` in the manifest's shape, so a caller can keep one in its own
+configuration file.
+
 ## Checks
 
 `BundleSpec::validate` reports everything clients would refuse, and `pack` refuses to write such a

@@ -86,10 +86,11 @@ last two are about the crate and its release.
   `mcpb::Version`), `Executable` carries an `Option<String>` arch that `validate` checks, and
   `Platform::parse` takes only the manifest's spelling (`darwin`, `linux`, `win32`), so `macos` is
   reported rather than packed.
-- [ ] `Serialize` / `Deserialize` for `BundleSpec` and `Platform`, so a manifest can be read,
-  edited and written back. `validate`, `info` and "same manifest, new version" all need it, and it
-  lets a caller keep the manifest in its own config file.
-- [ ] `Bundle::open`: read the manifest of an existing `.mcpb`, and extract it.
+- [x] `Serialize` / `Deserialize` for `BundleSpec` and `Platform`, so a manifest can be read,
+  edited and written back: `BundleSpec::from_manifest`, `in_dir` and the manifest's own shape as
+  serde form, which is what "same manifest, new version" and the reference-manifest test use.
+- [x] `Bundle::open`: read the manifest of an existing `.mcpb`, list what it holds, extract it, and
+  read its spec back with `Bundle::spec`.
 - [ ] A binary, so this is `cargo install mcpb` for people who do not want Node installed: `pack`,
   `info`, `validate`.
 - [x] Crate docs as the front door: the spec version written, the platform limitation, and an
@@ -99,10 +100,10 @@ last two are about the crate and its release.
 - [ ] Prove the declared MSRV: `rust-version = "1.85"`, which edition 2024 needs. CI tests the
   stable toolchain alone, and an MSRV job needs a committed `Cargo.lock`, since dependencies float
   while the lockfile is ignored.
-- [ ] Test against the spec's own examples, at least
+- [x] Test against the spec's own examples, at least
   [`examples/calculator-rust`](https://github.com/modelcontextprotocol/mcpb/tree/main/examples/calculator-rust):
-  read the bundle the Node CLI produced and compare its manifest to ours, so "same shape" is
-  checked rather than assumed.
+  its manifest is vendored in `tests/fixtures/`, and the tests check that the crate reads it,
+  writes the same manifest, packs it, and reads the same manifest back from the packed bundle.
 
 ## Publishing
 

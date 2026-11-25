@@ -64,6 +64,16 @@ All notable changes to this crate are documented here. It follows
   for the signature a bundle may carry after its zip; `extract_to` unpacks it,
   refusing a name that would leave the directory. A file that is no zip, or a
   zip without a `manifest.json`, is refused as `Error::Bundle`.
+- `BundleSpec::from_manifest` reads any manifest into a spec and
+  `BundleSpec::in_dir` joins the paths it names onto a directory, so a bundle
+  can be read, edited and written again; `BundleSpec` is `Serialize` and
+  `Deserialize` in the manifest's shape, and `Platform` in the format's
+  spelling. `Bundle::spec` reads the spec out of a packed bundle, filling in what
+  a manifest does not name (the architecture, the helpers and resources next to
+  the server, the locales) from the files themselves.
+- Tests against the manifest of the spec's own `examples/calculator-rust`,
+  vendored in `tests/fixtures/`: the crate reads it, writes the same manifest,
+  packs it, and reads the same manifest back one version later.
 - A test that checks every shape of manifest this crate writes against the
   manifest format's own JSON schema, vendored in `tests/schemas/`, so what
   clients accept is not only what our own tests expect.
@@ -111,7 +121,8 @@ All notable changes to this crate are documented here. It follows
 
 ### Dependencies
 
-- Added `semver`, which checks the version of a bundle.
+- Added `semver`, which types the version of a bundle, and `serde`, whose traits
+  let a manifest be serialized and deserialized in its own shape.
 - Added `jsonschema`, a dev-dependency of the schema test only.
 
 ## 0.1.0 - 2026-11-20

@@ -3,6 +3,7 @@
 #![doc = include_str!("../README.md")]
 
 mod bundle;
+mod manifest;
 mod validate;
 
 pub use bundle::{Bundle, Entry};
@@ -59,6 +60,9 @@ pub enum Error {
     /// A file of the bundle is named so that writing it would leave the
     /// directory it is unpacked into.
     Unsafe(String),
+    /// A manifest this crate cannot read as one: a field that is missing, of the
+    /// wrong type, or that names something no bundle has.
+    Manifest(String),
 }
 
 impl Error {
@@ -112,6 +116,7 @@ impl std::fmt::Display for Error {
             Self::Unsafe(name) => {
                 write!(f, "{name} would be written outside the bundle's directory")
             }
+            Self::Manifest(reason) => write!(f, "the manifest cannot be read: {reason}"),
         }
     }
 }
@@ -124,7 +129,8 @@ impl std::error::Error for Error {
             | Self::Icon(_)
             | Self::Clash { .. }
             | Self::Bundle { .. }
-            | Self::Unsafe(_) => None,
+            | Self::Unsafe(_)
+            | Self::Manifest(_) => None,
             Self::Version(source) => Some(source),
             Self::Read { source, .. } | Self::Write { source } => Some(source),
         }
@@ -1786,10 +1792,10 @@ mod tests {
 
     #[test]
     fn two_executables_may_not_be_written_under_one_name() {
-        let mut spec = spec(Platform::Darwin, "x".into());
+        let mut spec = self::spec(Platform::Darwin, "darwin-binary".into());
         spec.executables.insert(
             Platform::Linux,
-            Executable::new("x", "arm64").named("test-server"),
+            Executable::new("linux-binary", "arm64").named("test-server"),
         );
 
         let problems = spec.validate().unwrap_err();
@@ -1800,5 +1806,13 @@ mod tests {
                     .contains("two executables are written as \"server/test-server\"")),
             "{problems:?}"
         );
+
+        // The same binary for both platforms is written once, not refused.
+        let mut shared = self::spec(Platform::Darwin, "one-binary".into());
+        shared.executables.insert(
+            Platform::Linux,
+            Executable::new("one-binary", "arm64").named("test-server"),
+        );
+        assert_eq!(shared.validate(), Ok(()));
     }
 }
