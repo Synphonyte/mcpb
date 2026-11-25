@@ -1,4 +1,4 @@
-//! What a packed `.mcpb` file holds, read back from it.
+//! Reading a packed `.mcpb` back.
 
 use std::fs;
 use std::io::{self, Read};
@@ -8,12 +8,10 @@ use serde_json::Value;
 
 use crate::{BundleFile, BundleSpec, Error, MANIFEST_VERSION, RESOURCES_DIR, SERVER_DIR};
 
-/// What ends a signed bundle, after the zip and the signature. This crate does
-/// not sign, so it only reports whether a bundle carries a signature.
+/// The marker that ends a signed bundle.
 const SIGNATURE_END: &[u8] = b"MCPB_SIG_END";
 
-/// A `.mcpb` file, read back: its manifest, what it holds, and whether it is
-/// signed.
+/// A `.mcpb` file read back: its manifest, its files, and whether it is signed.
 ///
 /// ```no_run
 /// let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
@@ -39,17 +37,15 @@ pub struct Bundle {
 pub struct Entry {
     /// Its name in the zip, such as `server/my-server`.
     pub name: String,
-    /// How many bytes it unpacks to.
+    /// Its uncompressed size in bytes.
     pub size: u64,
-    /// Whether it is written as a program (mode 755) rather than as a file.
+    /// Whether it is executable (mode 755).
     pub executable: bool,
 }
 
 impl Bundle {
-    /// Reads the bundle at `path`.
-    ///
-    /// A file that is not a zip, or a zip without the `manifest.json` a bundle
-    /// must have, is refused rather than reported as an empty bundle.
+    /// Reads the bundle at `path`, refusing a file that is not a zip with a
+    /// `manifest.json`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref().to_path_buf();
         let file = fs::File::open(&path).map_err(|error| Error::read(&path, error))?;
@@ -91,12 +87,12 @@ impl Bundle {
         })
     }
 
-    /// Where the bundle is.
+    /// The bundle's path.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The `manifest.json` of the bundle, as it was written.
+    /// The bundle's `manifest.json`.
     pub fn manifest(&self) -> &Value {
         &self.manifest
     }
@@ -117,32 +113,31 @@ impl Bundle {
         self.manifest["server"]["entry_point"].as_str()
     }
 
-    /// How large the file is on disk, in bytes.
+    /// The bundle's size on disk, in bytes.
     pub fn size(&self) -> u64 {
         self.size
     }
 
-    /// Whether the bundle carries a signature after its zip, which this crate
-    /// reports but does not check: sign with the `mcpb` CLI and verify there.
+    /// Whether a signature follows the zip; it is not checked.
     pub fn is_signed(&self) -> bool {
         self.signed
     }
 
-    /// Whether the manifest is written in the format this crate writes.
+    /// Whether the manifest version is the one this crate writes.
     pub fn is_current(&self) -> bool {
         self.manifest_version() == Some(MANIFEST_VERSION)
     }
 
-    /// The spec this bundle's manifest describes, with its paths relative to the
-    /// bundle's root as the manifest names them - see [`BundleSpec::in_dir`].
+    /// The spec this bundle describes, with paths relative to the bundle's root;
+    /// see [`BundleSpec::in_dir`].
     ///
-    /// What the manifest does not name is read from the files themselves: the
-    /// helpers and resources next to the server, which it only reaches by
-    /// running them, and the per-locale translations it points at as a whole.
+    /// What the manifest doesn't name is read from the files: helpers and
+    /// resources in `server/`, locales, and any other file as a
+    /// [`BundleFile`](crate::BundleFile).
     pub fn spec(&self) -> Result<BundleSpec, Error> {
         let mut spec = BundleSpec::from_manifest(&self.manifest)?;
 
-        // What the manifest names already has its place in the spec.
+        // Files the manifest names are already in the spec.
         let mut named: Vec<String> = spec
             .executables
             .keys()
@@ -190,11 +185,8 @@ impl Bundle {
         Ok(spec)
     }
 
-    /// Writes the bundle's files into `dir`, which is created. A file that
-    /// unpacks to a program keeps the mode it was packed with.
-    ///
-    /// A name that would leave `dir`, such as `../x`, is refused rather than
-    /// written.
+    /// Unpacks the bundle into `dir`, creating it and keeping executables'
+    /// modes. A name that would escape `dir`, such as `../x`, is refused.
     pub fn extract_to(&self, dir: impl AsRef<Path>) -> Result<(), Error> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir).map_err(Error::write)?;

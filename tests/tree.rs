@@ -1,7 +1,4 @@
-//! Packing a directory tree: what the format leaves out, what a `.mcpbignore`
-//! adds to that, and what comes out where.
-//!
-//! The ignore file is the spec's own `examples/calculator-rust/.mcpbignore`,
+//! Packing directory trees, with the upstream `examples/calculator-rust/.mcpbignore`
 //! vendored in `tests/fixtures/`.
 
 use std::collections::BTreeMap;

@@ -4,11 +4,11 @@
 
 Pack a local MCP server as an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb) (`.mcpb`): a
 zip with a `manifest.json` and the server binary, which clients such as Claude Desktop install with
-one click. No Node and no `mcpb` CLI.
+one click. No Node or `mcpb` CLI needed.
 
 ```sh
 cargo add mcpb                # as a library
-cargo install --locked mcpb   # or as a command
+cargo install --locked mcpb   # as a command
 ```
 
 ```rust,no_run
@@ -57,27 +57,19 @@ fn main() -> Result<(), mcpb::Error> {
 }
 ```
 
-A bundle holds one server binary per platform it runs on. Usually that is one platform, because a
-binary only runs where it was built: the manifest can switch the command per operating system but
-not per CPU architecture, so each OS/architecture is its own bundle. Give `executables` several
-platforms and the bundle starts each platform's own binary through `platform_overrides`;
-`BundleSpec::file_name` names the bundle after them, the way the releases do. The crate needs Rust
-1.85 or later, since it is edition 2024; `Cargo.lock` is committed and CI runs `cargo test --locked`
-on 1.85, so that promise is checked against the versions that were tested.
+Only the name, version, description, author and executables are required; everything else has a
+default. `Platform` uses the manifest's spelling (`darwin`, `linux`, `win32`), and `Platform::parse`
+accepts nothing else.
 
-Everything but the name, the version, the description, the author and the executables has a
-default, so `..BundleSpec::default()` keeps a spec to what it says. The version is a
-[`Version`], so `"1.2.3".parse()?` either gives one or fails where the spec is built; `Platform` is
-named as the manifest spells it (`darwin`, `linux`, `win32`), and `Platform::parse` takes nothing
-else, so a release script that says `macos` hears about it.
+A binary only runs where it was built, and the manifest can switch the command per operating system
+but not per CPU architecture, so a bundle usually targets one OS and architecture. Give
+`executables` several platforms and each one starts its own binary through `platform_overrides`;
+`BundleSpec::file_name` names the bundle after them.
 
-Published as [`mcpb`](https://crates.io/crates/mcpb), with the API documentation on
-[docs.rs](https://docs.rs/mcpb); before 1.0 the API is not stable.
+Requires Rust 1.85 (edition 2024). Published on [crates.io](https://crates.io/crates/mcpb), with
+API docs on [docs.rs](https://docs.rs/mcpb). The API is not stable before 1.0.
 
-## On the command line
-
-`cargo install --locked mcpb` gives the same thing without a Rust program in the way: `pack` a
-manifest, `validate` a manifest or a bundle, `info` a bundle.
+## Command line
 
 ```sh
 mcpb pack path/to/manifest.json --arch arm64 -o my-server.mcpb
@@ -85,12 +77,11 @@ mcpb validate my-server.mcpb
 mcpb info my-server.mcpb
 ```
 
-`pack` reads the manifest's paths relative to the manifest and names the bundle
-`<name>-<version>-<platform>-<arch>.mcpb` unless `-o` says where to put it. `--tree dir` packs the
-files of a directory (relative to the manifest, too) into `server/` as they are laid out, as
-`.mcpbignore` leaves them, for a server with files beside its binary; `--data dir` writes them as
-files to read rather than as programs. `validate` checks a manifest, or a bundle and that it holds
-the files its manifest names. `info` prints what a bundle holds:
+- `pack` resolves paths relative to the manifest and names the bundle
+  `<name>-<version>-<platform>-<arch>.mcpb` unless `-o` is given. `--tree dir` packs a directory
+  into `server/` as executables, honouring `.mcpbignore`; `--data dir` packs it as plain files.
+- `validate` checks a manifest, or a bundle and that it holds the files its manifest names.
+- `info` prints what a bundle holds, with `*` marking executables:
 
 ```text
 calculator-rust 1.0.0
@@ -105,10 +96,9 @@ calculator-rust 1.0.0
          19 B  server/mcp-calculator *
 ```
 
-`*` marks a file written as a program. Everything a person reads there is what [`Bundle`] hands a
-Rust program as well, so a release check can be a few lines instead of a session at a terminal.
+The same information is available to Rust code through [`Bundle`].
 
-## What goes into a bundle
+## Bundle layout
 
 ```text
 my-server-1.2.3-darwin-arm64-win32-x64.mcpb
@@ -117,37 +107,27 @@ my-server-1.2.3-darwin-arm64-win32-x64.mcpb
 ├── screenshot.png                 # `screenshots`, likewise
 ├── server/
 │   ├── my-server                  # the first platform's binary, mode 755
-│   ├── my-server-win32.exe        # every further platform's, mode 755
+│   ├── my-server-win32.exe        # each further platform's binary, mode 755
 │   ├── helper                     # `extra_executables`, mode 755
 │   ├── THIRD-PARTY-NOTICES.md     # `resources`, mode 644
-│   └── lib/…                      # `trees`, laid out as they are on disk
+│   └── lib/…                      # `trees`, as laid out on disk
 └── mcpb-resources/
     └── de-DE.json                 # `localization`, mode 644
 ```
 
-The manifest is written in version 0.3 (`MANIFEST_VERSION`) with the name, version, description and
-author (`name`, `email`, `url`) of the server; the metadata stores show (`long_description`,
-`repository`, `homepage`, `documentation`, `support`, `license`, `keywords`, `privacy_policies`,
-`_meta`); its icon(s) and screenshots; tools and prompts with their `_generated` flags; its
-`compatibility.platforms`; what it asks the user for at install (`user_config`: text, numbers, tick
-boxes, directories and files); and `server.mcp_config`: the command (`${__dirname}/server/…`), the
-arguments, the environment (`env`), and the per-platform overrides.
+The manifest is written in version 0.3 (`MANIFEST_VERSION`). It holds the metadata (author,
+`long_description`, `repository`, `homepage`, `documentation`, `support`, `license`, `keywords`,
+`privacy_policies`, `_meta`), icons and screenshots, tools and prompts, `compatibility.platforms`,
+`user_config`, and `server.mcp_config` with the command, arguments, `env` and per-platform
+overrides. The first icon without a theme is also written as the plain `icon`, for clients that
+only read that field.
 
-The first icon without a theme is also written as the manifest's plain `icon`, which clients that
-read only that field show. Each platform of the bundle starts its own binary: the manifest's
-`entry_point` is the first platform's file and every other platform overrides the command, unless
-the spec gives that platform a wrapper of its own to run.
-
-What a server needs beside it that is more than a file - data files, packages, the assets of a script
-it runs - is a [`Tree`]: a directory packed as it is laid out, into `server/` or anywhere else in
-the bundle. A tree is packed without what the format leaves out anyway (`.git/`, `*.log`,
-`node_modules/.cache/`, lockfiles, `.mcpbignore` …) and without what the `.mcpbignore` at its root
-names, read as a `.gitignore` is: a pattern that starts with `/` or holds one in its middle
-matches from the tree's root only, any other at any depth. A symlink is packed as what it points
-at, a directory reached by two names is packed under both, and a link back into a directory the
-walk is inside is not followed; a link to nothing is refused unless a pattern leaves it out.
-[`Tree::new`] writes its files as programs, `Tree::data` as files to read, and `Tree::in_dir` puts
-them somewhere other than `server/`:
+A [`Tree`] packs a directory as it is laid out, for data files, packages or a script's assets. It
+skips what the format always excludes (`.git/`, `*.log`, `node_modules/.cache/`, lockfiles,
+`.mcpbignore` …) and what the `.mcpbignore` at its root lists, with `.gitignore` semantics.
+Symlinks are followed. A link back into a directory above it is skipped, and a dangling link is an
+error unless a pattern ignores it. [`Tree::new`] packs executables into `server/`, `Tree::data`
+packs plain files, and `Tree::in_dir` picks another directory:
 
 ```rust,no_run
 # fn main() -> Result<(), mcpb::Error> {
@@ -155,39 +135,30 @@ them somewhere other than `server/`:
 #     description: "What the server does.".into(), author: mcpb::Author::new("Me"),
 #     executables: Default::default(), ..mcpb::BundleSpec::default() };
 spec.trees = vec![
-    // What the server runs, next to the binary.
     mcpb::Tree::new("server-files"),
-    // The data it reads, into `server/data/`.
     mcpb::Tree::data("data").in_dir("server/data"),
 ];
 # Ok(())
 # }
 ```
 
-A single file goes wherever a [`BundleFile`] names it, such as `server/lib/libcalculator.dylib`. An
-icon or a screenshot whose path is also a `BundleFile` is written there, and the manifest names it
-there, such as `assets/icon.png`; any other goes to the bundle's root.
+A [`BundleFile`] puts a single file at any path, such as `server/lib/libcalculator.dylib`. An icon
+or screenshot whose path matches a `BundleFile` goes there, and the manifest points there;
+otherwise it goes to the root.
 
-`pack` writes the bundle under a temporary name and moves it into place, so a failed pack leaves no
-partial bundle behind; `pack_to` writes the same bundle to any `Write + Seek`, such as a
-`Cursor` over a `Vec` in memory. Both write the entries in a fixed order with a fixed timestamp, so
-the same spec packs to the same bytes every time - the files are sorted by their name in the bundle,
-whatever order the directory they came from listed them in. Both refuse two different files that
-would share a name in the zip; the same file used twice, as the plain icon and as an icon variant, is
-written once. Neither packs the bundle it is writing, so a bundle written into a directory it packs
-does not pack the previous one.
+`pack` writes to a temporary file and renames it, so a failed pack leaves nothing behind. `pack_to`
+writes to any `Write + Seek`. Output is reproducible: entries are sorted and use a fixed timestamp.
+Two different files with the same name are refused; the same file used twice is written once. A
+bundle is never packed into itself.
 
-What went wrong comes back as an [`mcpb::Error`](Error), with a variant per kind of failure that a
-caller can match on or `?` into its own error type: `Invalid` for the problems `validate` reports,
-`Version` for a version that does not parse, `Read` and `Write` for a file that could not be read or
-a bundle that could not be written, `Name`, `Icon` and `Clash` for a file that cannot go into the
-bundle as it is, and `Bundle`, `Unsafe` and `Manifest` for a bundle or manifest that cannot be
+Errors are an [`mcpb::Error`](Error), one variant per kind of failure: `Invalid` (what `validate`
+reports), `Version`, `Read`, `Write`, `Name` (no UTF-8 file name), `Icon` (not a PNG), `Clash` (two
+files, one name), and `Bundle`, `Unsafe` and `Manifest` for bundles and manifests that cannot be
 read.
 
-## Reading a bundle back
+## Reading a bundle
 
-[`Bundle::open`] reads a `.mcpb` that already exists - whatever packed it - for checking what a
-release actually contains:
+[`Bundle::open`] reads any existing `.mcpb`, whatever packed it:
 
 ```rust,no_run
 let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
@@ -200,123 +171,101 @@ bundle.extract_to("dist/unpacked")?;
 # Ok::<(), mcpb::Error>(())
 ```
 
-[`Bundle::manifest`] is the manifest as it was written, [`Bundle::entries`] the files with their
-sizes and whether they are written as programs, [`Bundle::is_signed`] whether a signature follows
-the zip (this crate neither signs nor checks signatures - see below), and [`Bundle::extract_to`]
-unpacks them, refusing a name that would leave the directory.
+[`Bundle::manifest`] returns the manifest, [`Bundle::entries`] the files with their sizes and
+modes, [`Bundle::is_signed`] whether a signature follows the zip, and [`Bundle::extract_to`]
+unpacks it, refusing paths that would escape the target directory.
 
 ## Editing a manifest
 
-[`BundleSpec::from_manifest`] turns any manifest into a spec, and `manifest()` writes it again, so a
-bundle can be read, changed and packed anew - the same bundle with a new version, say:
+[`BundleSpec::from_manifest`] turns a manifest into a spec and `manifest()` writes it back, so a
+bundle can be repacked with changes:
 
 ```rust,no_run
 let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
 bundle.extract_to("dist/unpacked")?;
 
-// The manifest names the files; `in_dir` finds them where they were unpacked.
 let mut spec = bundle.spec()?.in_dir("dist/unpacked");
 spec.version = "1.2.4".parse()?;
 spec.pack(format!("dist/{}", spec.file_name()).as_ref())?;
 # Ok::<(), mcpb::Error>(())
 ```
 
-What the manifest does not carry - the architecture of a binary, the helpers and resources next to
-the server, the locales - is what [`Bundle::spec`] reads from the files themselves;
-`from_manifest` alone leaves those empty, since a manifest does not name them. A file deeper than
-`server/`, or anywhere else the manifest does not point, comes back as a [`BundleFile`] under the
-name it had, so packing the spec again puts every file where it was. `from_manifest` reads a binary
-server only, whose `mcp_config.command` starts its `entry_point` somewhere under `server/`
-(`server/bin/my-server` stays where it is); anything else is refused rather than rewritten.
-`user_config` keeps the order the manifest gives it, which is the order clients ask in.
-`BundleSpec` is also `Serialize` and `Deserialize` in the manifest's shape, so a caller can keep one
-in its own configuration file.
+`from_manifest` leaves out what a manifest doesn't record; [`Bundle::spec`] reads it from the
+bundle instead: binary architectures, the helpers and resources in `server/`, and the locales. Any
+other file comes back as a [`BundleFile`] at its original path, so repacking keeps every file in
+place. `from_manifest` only reads binary servers whose `mcp_config.command` runs an `entry_point`
+under `server/`, and refuses anything else. `user_config` keeps its order. `BundleSpec` also
+implements `Serialize` and `Deserialize` in the manifest's shape.
 
 ## Checks
 
-`BundleSpec::validate` reports everything clients would refuse, and `pack` refuses to write such a
-spec. It looks at the spec alone:
+`BundleSpec::validate` reports everything clients would refuse, and `pack` won't write a spec that
+fails it:
 
-- the name may only hold ASCII letters, digits, `-`, `_` and `.`, and cannot be `.` or `..`, since
-  it names the executable and the bundle file
-- there is at least one executable, its architecture and name can be file names, and no two
-  platforms' binaries would be written under one name
-- every tree and every `BundleFile` goes to a path inside the bundle
-- the version is a semantic version, which [`Version`] enforces before a spec can hold one
-- description, author, `display_name`, `long_description`, `license`, the repository's type and
-  every `user_config` entry say something, and so do every tool's description and every prompt's
-  text
-- the author's email and the URLs (`author.url`, `homepage`, `documentation`, `support`,
-  `repository.url`, `privacy_policies`) look like what they claim
-- a tool, a prompt and a prompt's arguments are each named once, as is every keyword, and a `_meta`
-  namespace holds an object
-- `args` and `env` only use the variables clients substitute: `${__dirname}`, `${HOME}`,
+- the name uses only ASCII letters, digits, `-`, `_` and `.`, and is not `.` or `..`
+- there is at least one executable, architectures and names are valid file names, and no two
+  binaries share a name
+- every tree and `BundleFile` stays inside the bundle
+- description, author, `display_name`, `long_description`, `license`, repository type, tool
+  descriptions, prompt texts and `user_config` fields are not empty
+- emails and URLs (`author.url`, `homepage`, `documentation`, `support`, `repository.url`,
+  `privacy_policies`) look valid
+- tool, prompt, prompt argument and keyword names are unique, and each `_meta` namespace is an
+  object
+- `args` and `env` only use variables clients substitute: `${__dirname}`, `${HOME}`,
   `${DOCUMENTS}`, `${DOWNLOADS}`, `${DESKTOP}`, `${pathSeparator}`, `${/}`, and
-  `${user_config.<key>}` of a key the manifest declares
-- environment variables are named like environment variables
-- icon sizes read `WIDTHxHEIGHT`, and locale codes read like `en-US`
-- `platform_overrides` names a platform the bundle has an executable for: the one starting that
-  platform's own binary, or a wrapper around it
-- every `user_config` entry has a key of ASCII letters, digits, `_`, `-` and `.` that is used once, a
-  title and a description, and a default that fits its type; `min` and `max` only bound a number,
-  and `min` is not above `max`
+  `${user_config.<key>}` for declared keys
+- environment variable names, `WIDTHxHEIGHT` icon sizes and `en-US`-style locales are well formed
+- `platform_overrides` only names platforms that have an executable
+- `user_config` keys (ASCII letters, digits, `_`, `-`, `.`) are unique, defaults match their type,
+  and `min`/`max` only bound numbers, with `min` not above `max`
 
-`pack` additionally reads the files: an icon that is not a PNG is refused, since clients show
-nothing else, and so is a second, different file whose name is already taken in the zip. `mcpb
-validate` on a bundle also checks that the bundle holds what its manifest names: the entry point,
-each platform's own binary, the icons and the screenshots.
+The version is a [`Version`], so it is always valid semver. `pack` also refuses icons that aren't
+PNGs and file name clashes. `mcpb validate` on a bundle also checks that the entry point, each
+platform's binary, the icons and the screenshots are present.
 
 ## Tests
 
-`cargo test` validates what [`manifest`](BundleSpec::manifest) writes against the manifest format's
-own JSON schema (`tests/schemas/`, taken from the MCP Bundle repository), so what clients accept is
-checked rather than assumed from our own expectations. The spec's own
+`cargo test` validates generated manifests against the format's JSON schema (`tests/schemas/`,
+from the MCP Bundle repository), and round-trips the upstream
 [`examples/calculator-rust`](https://github.com/modelcontextprotocol/mcpb/tree/main/examples/calculator-rust)
-manifest and `.mcpbignore` are vendored in `tests/fixtures/`: the tests read that manifest, write
-the same one again, pack it, and read it back from the bundle.
+manifest and `.mcpbignore` (vendored in `tests/fixtures/`).
 
-CI runs the tests on Linux, macOS and Windows, each on x64 and arm64 (macOS on its default
-architecture, plus a bundle of the other one from a cross-built binary), and on Rust 1.85 with the
-committed `Cargo.lock`. On each of those runners it packs real bundles, with the library and with
-the `mcpb` binary, and has the official CLI unpack and validate them.
+CI runs on Linux, macOS and Windows, x64 and arm64, and on Rust 1.85 with the committed
+`Cargo.lock`. On each runner it also packs real bundles with the library and the CLI, and has the
+official `mcpb` CLI unpack and validate them.
 
 ## Not supported
 
-- **Signing** (`mcpb sign`/`verify`/`unsign`). Bundles are unsigned, which `mcpb info` and
-  [`Bundle::is_signed`] report; sign them with the official `mcpb` CLI after packing if you need a
-  signature. The format is a PKCS#7 signature appended after the zip (`MCPB_SIG_V1`, a 4-byte
-  little-endian length, the DER signature, `MCPB_SIG_END`), so an unsigned bundle is a plain zip and
-  signing can be added later without changing what is packed. It is left out because it needs a
-  crypto stack, which would have to sit behind a feature, and because clients only treat a bundle
-  signed with a CA-issued certificate as signed, so a self-signed signature buys little.
-- **Server types other than `binary`** - node, python, `uv`. The crate's point is that there is no
-  runtime to ship, and `from_manifest` refuses such a manifest.
-- **One bundle for several CPU architectures.** The manifest can switch the command per operating
-  system but not per architecture, so x64 and arm64 are separate bundles - unless the server is a
-  universal macOS binary.
-- **Manifest version 0.4.** Bundles are written in 0.3 (`MANIFEST_VERSION`); 0.4 adds the `uv`
-  server type and nothing a binary bundle can use.
-- **A localization path of your own.** The translations are always at
-  `mcpb-resources/${locale}.json`.
+- **Signing.** Bundles are unsigned, as `mcpb info` and [`Bundle::is_signed`] report; sign them
+  with the official `mcpb sign` after packing. Signing would need a crypto stack, and clients only
+  trust CA-issued certificates, so a self-signed signature adds little. The signature is a PKCS#7
+  trailer after the zip, so support can be added later without changing what is packed.
+- **Non-binary servers** (node, python, `uv`). The point is to ship no runtime; `from_manifest`
+  refuses them.
+- **Several CPU architectures in one bundle.** The manifest can't switch per architecture, so x64
+  and arm64 need separate bundles, unless the binary is a universal macOS binary.
+- **Manifest version 0.4.** It only adds the `uv` server type.
+- **A custom localization path.** Translations always go to `mcpb-resources/${locale}.json`.
 
 ## Releasing
 
-Set the version in `Cargo.toml`, turn the changelog's `Unreleased` heading into
-`<version> - YYYY-MM-DD`, commit, and tag that commit `v<version>`:
+Set the version in `Cargo.toml`, rename the changelog's `Unreleased` heading to
+`<version> - YYYY-MM-DD`, commit, then tag and push:
 
 ```sh
 git tag -a v0.2.1 -m v0.2.1
 git push origin main v0.2.1
 ```
 
-`.github/workflows/release.yml` then publishes the crate to crates.io through Trusted Publishing
-and creates the GitHub release with that changelog section as its notes. A tag that does not name
-the crate's version, or a changelog entry without a date, is refused before anything is published;
-a re-run skips a version crates.io already has and still creates the release.
+`.github/workflows/release.yml` then publishes to crates.io through Trusted Publishing and creates
+a GitHub release with that changelog section as its notes. It refuses a tag that doesn't match the
+crate's version or a changelog entry without a date, and a re-run skips publishing a version
+crates.io already has.
 
 ## Changelog
 
-What changed in each release: [CHANGELOG.md](https://github.com/Synphonyte/mcpb/blob/main/CHANGELOG.md).
+See [CHANGELOG.md](https://github.com/Synphonyte/mcpb/blob/main/CHANGELOG.md).
 
 ## License
 

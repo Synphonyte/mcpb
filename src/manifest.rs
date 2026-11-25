@@ -1,10 +1,5 @@
-//! Reading a manifest back into a [`BundleSpec`].
-//!
-//! [`BundleSpec::manifest`] is the one writer; this is the reader that mirrors
-//! it, so a manifest can be read, edited and written again - "same bundle, new
-//! version". Paths come back as the manifest names them, relative to the
-//! bundle's root; [`BundleSpec::in_dir`] joins them onto a directory, and
-//! [`Bundle::spec`](crate::Bundle::spec) reads one out of a packed file.
+//! Reading a manifest back into a [`BundleSpec`], the inverse of
+//! [`BundleSpec::manifest`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,15 +14,11 @@ use crate::{
 };
 
 impl BundleSpec {
-    /// The spec a manifest describes, with every path relative to the bundle's
-    /// root, as the manifest names it.
+    /// The spec a manifest describes, with paths relative to the bundle's root.
     ///
-    /// What the manifest does not carry is left empty: the architecture of a
-    /// binary and the files the manifest does not name (helpers, resources and
-    /// the per-locale translations), which
-    /// [`Bundle::spec`](crate::Bundle::spec) fills in from a packed file.
-    /// `manifest_version` is not carried either, since `manifest()` writes
-    /// [`MANIFEST_VERSION`](crate::MANIFEST_VERSION).
+    /// What a manifest doesn't record is left empty: binary architectures,
+    /// helpers, resources and locales. [`Bundle::spec`](crate::Bundle::spec)
+    /// fills those in from a packed bundle. Only binary servers are read.
     pub fn from_manifest(manifest: &Value) -> Result<Self, Error> {
         let root = manifest
             .as_object()
@@ -37,8 +28,7 @@ impl BundleSpec {
         let config = object(server.get("mcp_config"), "server.mcp_config")?;
         let compatibility = object(root.get("compatibility"), "compatibility")?;
 
-        // `manifest()` writes a binary server that starts its entry point, so a
-        // manifest of another kind would come back out as something else.
+        // Anything else would be rewritten as a binary server on the way out.
         let kind = text(server.get("type"), "server.type")?;
         if kind != "binary" {
             return Err(Error::Manifest(format!(
@@ -77,8 +67,7 @@ impl BundleSpec {
             executables: executables(server, config, compatibility)?,
             extra_executables: Vec::new(),
             resources: Vec::new(),
-            // A manifest names files, never directories: what a tree packed
-            // reads back as the files it holds, next to the server.
+            // A manifest names files, not trees.
             trees: Vec::new(),
             files: placed(root)?,
             icon: text_opt(root.get("icon"), "icon")?.map(PathBuf::from),
@@ -100,8 +89,8 @@ impl BundleSpec {
         })
     }
 
-    /// The same spec with every path joined onto `dir`, such as the directory a
-    /// bundle was extracted into.
+    /// The spec with every path joined onto `dir`, such as where a bundle was
+    /// extracted.
     pub fn in_dir(&self, dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
         let mut spec = self.clone();
@@ -170,8 +159,7 @@ impl<'de> Deserialize<'de> for Platform {
 }
 
 impl UserConfigKind {
-    /// From what the manifest writes: `string`, `number`, `boolean`, `directory`
-    /// or `file`.
+    /// Parses the manifest's spelling, such as `string` or `directory`.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "string" => Some(Self::String),
@@ -207,8 +195,7 @@ fn repository(value: Option<&Value>) -> Result<Option<Repository>, Error> {
     }))
 }
 
-/// The bundle's binaries: every platform it runs on, and what that platform
-/// starts - its own override, or the entry point.
+/// Each platform's binary: its override's command, else the entry point.
 fn executables(
     server: &Map<String, Value>,
     config: &Map<String, Value>,
@@ -237,9 +224,8 @@ fn executables(
     }
 
     for platform in platforms {
-        // A platform whose override starts a file of `server/` runs a binary
-        // of its own. Any other command - `node`, a wrapper elsewhere in the
-        // bundle - wraps the entry point, and stays in the override.
+        // An override command under `server/` is the platform's own binary; any
+        // other command wraps the entry point and stays an override.
         let own = overrides
             .get(&platform)
             .and_then(|config| config.command.as_deref())
@@ -247,9 +233,8 @@ fn executables(
             .filter(|path| path.starts_with("server/"));
         let path = own.unwrap_or(&entry_point).to_string();
 
-        // The binary keeps its place under `server/`, subdirectory and all. The
-        // manifest spells Windows' binary with its `.exe`; the spec leaves the
-        // suffix to the writer.
+        // Keep the path below `server/`, minus Windows' `.exe`, which the writer
+        // adds.
         let mut name = path["server/".len()..].to_string();
         if platform == Platform::Win32 {
             name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
@@ -302,8 +287,8 @@ fn overrides(value: Option<&Value>) -> Result<BTreeMap<Platform, PlatformConfig>
     Ok(configs)
 }
 
-/// An icon or a screenshot below the bundle's root keeps its place through a
-/// file that puts it there; one at the root needs none.
+/// A [`BundleFile`] for each icon or screenshot below the bundle's root, so it
+/// stays in place.
 fn placed(root: &Map<String, Value>) -> Result<Vec<BundleFile>, Error> {
     let mut names: Vec<String> = text_opt(root.get("icon"), "icon")?.into_iter().collect();
     names.extend(
@@ -402,8 +387,7 @@ fn localization(value: Option<&Value>) -> Result<Option<Localization>, Error> {
             localization.get("default_locale"),
             "localization.default_locale",
         )?,
-        // The manifest points at `mcpb-resources/${locale}.json` and names no
-        // locale; the files themselves are what say which ones exist.
+        // The manifest names no locales; only the bundle's files do.
         locales: BTreeMap::new(),
     }))
 }

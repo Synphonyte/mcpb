@@ -1,10 +1,10 @@
-//! The `mcpb` binary, run as a person runs it.
+//! The `mcpb` binary, run end to end.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// The manifest of the spec's own Rust example, with its binary beside it.
+/// The upstream Rust example's manifest, with its binary beside it.
 fn example(dir: &Path) -> PathBuf {
     fs::create_dir_all(dir.join("server")).expect("the directory");
     fs::write(

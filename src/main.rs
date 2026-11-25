@@ -64,8 +64,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// Why the command did not finish: the caller got the arguments wrong, the
-/// work itself failed, or what `validate` looked at is not valid.
+/// Why the command failed: bad arguments, a failed operation, or an invalid
+/// manifest or bundle.
 enum Failure {
     Usage(String),
     Failed(Error),
@@ -209,7 +209,7 @@ fn pack(
             executable.arch = Some(arch.clone());
         }
     }
-    // As every path of the manifest is, a tree is relative to the manifest.
+    // Trees are relative to the manifest, like its other paths.
     spec.trees.extend(trees.into_iter().map(|tree| Tree {
         path: dir.join(&tree.path),
         ..tree
@@ -234,8 +234,7 @@ fn pack(
     ))
 }
 
-/// The spec of a manifest, with the paths it names joined onto the directory
-/// the manifest is in.
+/// The manifest's spec, with its paths joined onto the manifest's directory.
 fn read_manifest(path: &Path) -> Result<BundleSpec, Failure> {
     let text = fs::read_to_string(path).map_err(|error| {
         Failure::Failed(Error::Read {
@@ -276,8 +275,7 @@ fn validate(path: &Path) -> Result<Option<String>, Failure> {
     valid(&read_manifest(&manifest)?, &manifest, None)
 }
 
-/// Whether the file is a bundle rather than a manifest, whatever it is named: a
-/// zip starts with `PK`, JSON does not.
+/// Whether the file is a zip (starts with `PK`) rather than a manifest.
 fn is_bundle(path: &Path) -> bool {
     use std::io::Read;
 
@@ -288,7 +286,7 @@ fn is_bundle(path: &Path) -> bool {
     }
 }
 
-/// The one answer `validate` gives, for a manifest and for a bundle alike.
+/// What `validate` reports, for a manifest or a bundle.
 fn valid(
     spec: &BundleSpec,
     what: &Path,
@@ -326,8 +324,8 @@ fn valid(
     Ok(Some(text))
 }
 
-/// The files the bundle's manifest points at that the bundle does not hold:
-/// the entry point, each platform's own binary, the icons and the screenshots.
+/// The files the manifest names that the bundle lacks: the entry point, each
+/// platform's binary, the icons and the screenshots.
 fn missing(bundle: &Bundle) -> Vec<String> {
     let manifest = bundle.manifest();
     let mut named: Vec<(&str, &str)> = Vec::new();
@@ -414,7 +412,7 @@ fn platforms(bundle: &Bundle) -> String {
         .unwrap_or_default()
 }
 
-/// A size as a person reads it.
+/// A human-readable size.
 fn size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
     let mut size = bytes as f64;

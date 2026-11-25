@@ -1,5 +1,4 @@
-// The README is the crate's documentation, so its example is compiled by
-// `cargo test`.
+// The README is the crate docs, so `cargo test` compiles its examples.
 #![doc = include_str!("../README.md")]
 
 mod bundle;
@@ -18,53 +17,48 @@ use serde_json::{Map, Value, json};
 
 use crate::ignore::Exclusions;
 
-/// A semantic version, re-exported: it types [`BundleSpec::version`], so a
-/// caller does not need `semver` in its own dependencies.
+/// Re-exported for [`BundleSpec::version`], so callers don't need `semver`.
 pub use semver::Version;
 
 /// The manifest format the bundles are written in.
 pub const MANIFEST_VERSION: &str = "0.3";
 
-/// Where the binaries and the files they use go in the bundle.
+/// The bundle directory for the server and its files.
 const SERVER_DIR: &str = "server";
 
-/// Where clients look for the localized strings; the manifest points here.
+/// The bundle directory for translations.
 const RESOURCES_DIR: &str = "mcpb-resources";
 
-/// What the first bytes of a file must be to be a PNG.
+/// The PNG file signature.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
-/// What can go wrong writing a bundle.
+/// What can go wrong packing or reading a bundle.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// The spec would produce a bundle clients refuse. Every problem is here, and
-    /// [`BundleSpec::validate`] reports the same list.
+    /// The spec would produce a bundle clients refuse, with every problem
+    /// [`BundleSpec::validate`] reports.
     Invalid(Vec<String>),
     /// A version that is not a semantic version.
     Version(semver::Error),
-    /// A file that belongs in the bundle could not be read.
+    /// A file could not be read.
     Read {
         path: PathBuf,
         source: std::io::Error,
     },
     /// The bundle could not be written.
     Write { source: std::io::Error },
-    /// A file has no name of its own to be written under, or a name that is not
-    /// UTF-8.
+    /// A file has no name, or a name that is not UTF-8.
     Name(PathBuf),
-    /// A file that is meant to be an icon is not a PNG.
+    /// An icon is not a PNG.
     Icon(PathBuf),
-    /// Two files of the bundle would be written under the same name.
+    /// Two different files would get the same name in the bundle.
     Clash { file: PathBuf, name: String },
-    /// The file is not a bundle this crate can read, and the reason is the
-    /// manifest that is missing or the JSON that is not what a manifest holds.
+    /// The file is not a zip with a valid `manifest.json`.
     Bundle { path: PathBuf, reason: String },
-    /// A file of the bundle is named so that writing it would leave the
-    /// directory it is unpacked into.
+    /// An entry's name would escape the directory it is extracted into.
     Unsafe(String),
-    /// A manifest this crate cannot read as one: a field that is missing, of the
-    /// wrong type, or that names something no bundle has.
+    /// A manifest field is missing, has the wrong type, or is not supported.
     Manifest(String),
 }
 
@@ -162,9 +156,8 @@ impl From<zip::result::ZipError> for Error {
 
 /// An operating system a bundle can target (`compatibility.platforms`).
 ///
-/// Platforms are ordered as the manifest spells them - `darwin`, `linux`,
-/// `win32` - so a bundle's entries, its `entry_point` and its file name do not
-/// depend on the order these variants are declared in.
+/// Platforms sort by their manifest spelling (`darwin`, `linux`, `win32`),
+/// which decides the `entry_point` and the bundle's file name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Platform {
     Darwin,
@@ -194,8 +187,7 @@ impl Platform {
         }
     }
 
-    /// From the spelling the manifest uses - `darwin`, `win32`, `linux` - and
-    /// nothing else, so a release script that says `macos` hears about it.
+    /// Accepts only the manifest's spelling: `darwin`, `win32` or `linux`.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "darwin" => Some(Self::Darwin),
@@ -245,10 +237,8 @@ impl UserConfigKind {
     }
 }
 
-/// A value the client asks the user for at install.
-///
-/// The spec's `args` and `env` refer to it as `${user_config.<key>}`, which the
-/// client substitutes with what the user gave.
+/// A value the client asks the user for at install, which `args` and `env`
+/// refer to as `${user_config.<key>}`.
 #[derive(Clone, Debug)]
 pub struct UserConfig {
     /// The name `${user_config.<key>}` refers to, such as `project_dir`.
@@ -263,10 +253,9 @@ pub struct UserConfig {
     pub required: bool,
     /// Whether clients hide what the user types, for secrets.
     pub sensitive: bool,
-    /// Whether the user may give several values; they are passed as separate
-    /// arguments wherever `${user_config.<key>}` stands.
+    /// Whether the user may give several values, passed as separate arguments.
     pub multiple: bool,
-    /// What the field starts with.
+    /// The initial value.
     pub default: Option<Value>,
     /// The smallest number [`UserConfigKind::Number`] takes.
     pub min: Option<f64>,
@@ -275,7 +264,7 @@ pub struct UserConfig {
 }
 
 impl UserConfig {
-    /// A directory the client asks for, such as the project the server works in.
+    /// A directory the user picks.
     pub fn directory(
         key: impl Into<String>,
         title: impl Into<String>,
@@ -367,20 +356,19 @@ impl UserConfig {
     }
 }
 
-/// An icon of the bundle, with the size clients should show it at.
+/// An icon and the size it is shown at.
 #[derive(Clone, Debug)]
 pub struct Icon {
-    /// The PNG file, written to the root of the bundle under its own name, or
-    /// where a [`BundleSpec::files`] entry of the same path puts it.
+    /// The PNG file. It goes to the bundle's root unless a
+    /// [`BundleSpec::files`] entry with the same path places it.
     pub path: PathBuf,
-    /// The size it is drawn at, such as `128x128`.
+    /// Such as `128x128`.
     pub size: String,
-    /// `light`, `dark` or a platform's own label. Shown where that theme
-    /// applies; without a theme the icon is shown anywhere.
+    /// `light`, `dark` or a platform-specific label; `None` for any theme.
     pub theme: Option<String>,
 }
 
-/// A prompt the bundle advertises, so clients can list it before installing.
+/// A prompt the bundle advertises, listed before install.
 #[derive(Clone, Debug)]
 pub struct Prompt {
     pub name: String,
@@ -388,36 +376,30 @@ pub struct Prompt {
     pub description: Option<String>,
     /// The names [`Self::text`] may use as `${arguments.<name>}`.
     pub arguments: Vec<String>,
-    /// The prompt's text, with `${arguments.<name>}` standing in for what the
-    /// user answers.
+    /// The prompt's text, where `${arguments.<name>}` is replaced by the argument.
     pub text: String,
 }
 
-/// Translated user-facing strings, for clients that read the manifest in the
-/// user's language.
+/// Translations of the manifest's user-facing strings.
 #[derive(Clone, Debug)]
 pub struct Localization {
-    /// The locale whose strings are in the manifest itself, and the one clients
-    /// fall back to. A BCP 47 identifier such as `en-US`.
+    /// The locale of the manifest's own strings and the fallback, such as `en-US`.
     pub default_locale: String,
-    /// The locale ([`Self::default_locale`] or another, such as `de-DE`) and the
-    /// JSON file of its overrides, each written to
+    /// Each locale's JSON file of overrides, written to
     /// `mcpb-resources/<locale>.json`.
     pub locales: BTreeMap<String, PathBuf>,
 }
 
-/// What a platform runs instead of the bundle's command, [`BundleSpec::args`]
-/// and [`BundleSpec::env`] (`mcp_config.platform_overrides`). Every platform of
-/// the bundle starts its own binary; [`BundleSpec::validate`] refuses an
-/// override for a platform without one, and an override that sets nothing is
-/// not written at all.
+/// A platform's replacement for the bundle's command, [`BundleSpec::args`] and
+/// [`BundleSpec::env`] (`mcp_config.platform_overrides`). Only platforms with
+/// an executable may have one.
 #[derive(Clone, Debug, Default)]
 pub struct PlatformConfig {
-    /// What to run instead of that platform's binary, for a wrapper around it.
+    /// A wrapper to run instead of the platform's binary.
     pub command: Option<String>,
     /// What to pass instead of [`BundleSpec::args`].
     pub args: Option<Vec<String>>,
-    /// Values added to the environment, replacing [`BundleSpec::env`] wholesale.
+    /// Environment variables to set instead of [`BundleSpec::env`].
     pub env: Option<BTreeMap<String, String>>,
 }
 
@@ -440,16 +422,16 @@ impl PlatformConfig {
 /// Who made the server (`author` in the manifest).
 #[derive(Clone, Debug, Default)]
 pub struct Author {
-    /// The person or organisation, as clients show it.
+    /// The person or organisation.
     pub name: String,
-    /// Where to reach them.
+    /// Their email address.
     pub email: Option<String>,
     /// Their website.
     pub url: Option<String>,
 }
 
 impl Author {
-    /// An author with a name and nothing else.
+    /// An author with only a name.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -473,9 +455,9 @@ impl Author {
 /// Where the server's source lives (`repository` in the manifest).
 #[derive(Clone, Debug)]
 pub struct Repository {
-    /// The kind of repository, such as `git`.
+    /// Such as `git`.
     pub kind: String,
-    /// Where it is cloned from.
+    /// The clone URL.
     pub url: String,
 }
 
@@ -493,20 +475,16 @@ impl Repository {
     }
 }
 
-/// A server binary, and the CPU architecture it was built for.
+/// A server binary and the CPU architecture it was built for.
 #[derive(Clone, Debug)]
 pub struct Executable {
-    /// The compiled server, where it was built.
+    /// The compiled binary.
     pub path: PathBuf,
-    /// Such as `arm64` or `x64`. The manifest cannot switch per architecture,
-    /// so it only names the bundle - see [`BundleSpec::file_name`]. `None` for a
-    /// spec read from a manifest, which does not carry one.
+    /// Such as `arm64` or `x64`. Only used in [`BundleSpec::file_name`], since
+    /// the manifest doesn't record it; `None` when read from a manifest.
     pub arch: Option<String>,
-    /// The name it is written under in `server/`, Windows' `.exe` left out,
-    /// with `/` between directories for a binary in a subdirectory such as
-    /// `bin/my-server`. `None` names it after the bundle, which is what a spec
-    /// being packed usually wants; a manifest of the caller's own may name it
-    /// otherwise.
+    /// Its path below `server/`, such as `bin/my-server`, without Windows'
+    /// `.exe`. `None` names it after the bundle.
     pub name: Option<String>,
 }
 
@@ -520,31 +498,27 @@ impl Executable {
         }
     }
 
-    /// The binary written into `server/` as `name` instead of after the bundle,
-    /// Windows' `.exe` left out.
+    /// Writes the binary as `server/<name>` instead of after the bundle.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 }
 
-/// One file written under a name of its own in the bundle, such as
-/// `server/lib/libcalculator.dylib`: what [`Bundle::spec`] gives back for the
-/// files of a bundle that sit deeper than `server/` and that the manifest does
-/// not name, so packing the spec again puts them where they were.
+/// A single file placed at a path of its own, such as
+/// `server/lib/libcalculator.dylib`.
 #[derive(Clone, Debug)]
 pub struct BundleFile {
     /// The file on disk.
     pub path: PathBuf,
-    /// Its name in the bundle, with `/` between directories.
+    /// Its path in the bundle, with `/` separators.
     pub name: String,
-    /// The mode it is written with: 755 for what is run, 644 for what is only
-    /// read.
+    /// 755 for executables, 644 for plain files.
     pub mode: u32,
 }
 
 impl BundleFile {
-    /// The file at `path`, written as the program `name`.
+    /// The file at `path`, written as executable `name`.
     pub fn new(path: impl Into<PathBuf>, name: impl Into<String>) -> Self {
         Self {
             path: path.into(),
@@ -553,7 +527,7 @@ impl BundleFile {
         }
     }
 
-    /// The same, written as a file to read rather than as a program.
+    /// The same, as a plain file.
     pub fn data(path: impl Into<PathBuf>, name: impl Into<String>) -> Self {
         Self {
             mode: 0o644,
@@ -562,31 +536,23 @@ impl BundleFile {
     }
 }
 
-/// A directory packed as it is laid out on disk, for what a server needs beside
-/// it: data files, packages, the assets of a script it runs.
+/// A directory packed as it is laid out on disk, such as data files or packages.
 ///
-/// What is left out is the packaging side of it, not the server's: the format's
-/// own exclusions (`.git/`, `*.log`, `node_modules/.cache/`, lockfiles and the
-/// like), the `.mcpbignore` itself, and the lines of a `.mcpbignore` at the
-/// directory's root. Those read as
-/// a `.gitignore` does: one pattern a line, `#` for a comment, `!` to take a
-/// file back, a trailing `/` for a directory, `*` and `?` within a name, `**`
-/// across names, and a pattern without a `/` matching a name at any depth.
+/// It skips the format's own exclusions (`.git/`, `*.log`,
+/// `node_modules/.cache/`, lockfiles and the like), the `.mcpbignore` itself,
+/// and the patterns of a `.mcpbignore` at its root, read as a `.gitignore` is.
 #[derive(Clone, Debug)]
 pub struct Tree {
     /// The directory to pack.
     pub path: PathBuf,
-    /// Where what it holds goes in the bundle: `server` beside the binary, or
-    /// `""` for the bundle's root.
+    /// Its directory in the bundle, such as `server`, or `""` for the root.
     pub into: String,
-    /// The mode its files are written with: 755 for what is run, 644 for what is
-    /// only read.
+    /// 755 for executables, 644 for plain files.
     pub mode: u32,
 }
 
 impl Tree {
-    /// The directory's files, written into `server/` beside the binary as
-    /// programs.
+    /// The directory's files, as executables in `server/`.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -595,7 +561,7 @@ impl Tree {
         }
     }
 
-    /// The same, written as files to read rather than as programs.
+    /// The same, as plain files.
     pub fn data(path: impl Into<PathBuf>) -> Self {
         Self {
             mode: 0o644,
@@ -603,8 +569,7 @@ impl Tree {
         }
     }
 
-    /// The directory's files written into `into` instead: `""` for the bundle's
-    /// root, or a path inside the bundle such as `server/assets`.
+    /// Packs into `into` instead, such as `server/assets`, or `""` for the root.
     pub fn in_dir(mut self, into: impl Into<String>) -> Self {
         self.into = into.into();
         self
@@ -613,9 +578,8 @@ impl Tree {
 
 /// What goes into a bundle.
 ///
-/// Every field but the name, the version, the description, the author and the
-/// executables can be left at [`Default::default`], so a spec is usually built
-/// with a struct update:
+/// Every field but the name, version, description, author and executables can
+/// be left at its default:
 ///
 /// ```
 /// # use std::collections::BTreeMap;
@@ -635,11 +599,11 @@ impl Tree {
 /// ```
 #[derive(Clone, Debug)]
 pub struct BundleSpec {
-    /// The bundle's and the executable's name, such as `lyte-admin-build-mcp`.
+    /// Names the bundle and its executable, such as `my-server`.
     pub name: String,
-    /// What clients show as the extension's name. `name` by default.
+    /// The name clients show; `name` by default.
     pub display_name: Option<String>,
-    /// A semantic version, which is also what names the bundle file.
+    /// The version, also used in the bundle's file name.
     pub version: Version,
     /// What the server does, in a sentence.
     pub description: String,
@@ -653,72 +617,58 @@ pub struct BundleSpec {
     pub homepage: Option<String>,
     /// Where the server is documented.
     pub documentation: Option<String>,
-    /// Where users report problems with it.
+    /// Where users report problems.
     pub support: Option<String>,
-    /// The licence, as an identifier such as `MIT`.
+    /// An SPDX identifier such as `MIT`.
     pub license: Option<String>,
-    /// What the server is about, for stores that search.
+    /// Search keywords for stores.
     pub keywords: Vec<String>,
     /// The privacy policies of the services the server talks to.
     pub privacy_policies: Vec<String>,
-    /// The platforms the bundle runs on, each with the server binary built for
-    /// it. One entry is the usual case; several make one bundle that runs on
-    /// each of them, each platform starting its own binary.
+    /// The server binary for each platform the bundle runs on.
     pub executables: BTreeMap<Platform, Executable>,
-    /// Further executables placed next to the server in `server/`, under
-    /// their own file names (helpers the server runs, such as `labuild`).
+    /// Helper executables, written to `server/` under their own file names.
     pub extra_executables: Vec<PathBuf>,
-    /// Files placed next to the server in `server/` that are read, not run
-    /// (notices, licences), under their own file names.
+    /// Plain files such as notices, written to `server/` under their own names.
     pub resources: Vec<PathBuf>,
-    /// Directories packed whole, as they are laid out on disk - see [`Tree`].
+    /// Directories packed whole; see [`Tree`].
     pub trees: Vec<Tree>,
-    /// Single files written under a name of their own - see [`BundleFile`].
+    /// Single files placed at a path of their own; see [`BundleFile`].
     pub files: Vec<BundleFile>,
-    /// The bundle's icon, a PNG written to the root of the bundle - or, when its
-    /// path is also one of [`Self::files`], under that file's name, such as
-    /// `assets/icon.png`.
+    /// The bundle's PNG icon. It goes to the bundle's root unless one of
+    /// [`Self::files`] with the same path places it.
     pub icon: Option<PathBuf>,
-    /// Further icons, for sizes and themes, placed as [`Self::icon`] is. The
-    /// first one without a theme is also written as the manifest's `icon`, so
-    /// clients that only read that field show an icon as well.
+    /// Icons for other sizes and themes, placed like [`Self::icon`]. Without an
+    /// `icon`, the first one without a theme is also written as the manifest's
+    /// `icon`.
     pub icons: Vec<Icon>,
-    /// What the extension looks like, written to the root of the bundle under
-    /// their own file names - or, for a screenshot whose path is also one of
-    /// [`Self::files`], under that file's name, such as `assets/shot.png`.
+    /// Screenshots, placed like [`Self::icon`].
     pub screenshots: Vec<PathBuf>,
-    /// Shown to the user before install: name and description of each tool.
+    /// The name and description of each tool, shown before install.
     pub tools: Vec<(String, String)>,
     /// Whether the server adds tools of its own at run time.
     pub tools_generated: bool,
-    /// Prompts the clients list next to the tools.
+    /// Prompts, listed next to the tools.
     pub prompts: Vec<Prompt>,
     /// Whether the server adds prompts of its own at run time.
     pub prompts_generated: bool,
     /// Translations of [`Self::description`] and the other fields clients show.
     pub localization: Option<Localization>,
-    /// What the client asks the user for at install, such as the project the
-    /// server works in. `args` and `env` refer to it as `${user_config.<key>}`.
+    /// What the client asks the user for at install; see [`UserConfig`].
     pub user_config: Vec<UserConfig>,
-    /// Arguments for the server. The client substitutes the `${...}` variables
-    /// in them.
+    /// The server's arguments, with `${...}` variables substituted by the client.
     pub args: Vec<String>,
-    /// Environment variables of the server, which the client adds to its own.
-    /// The `${...}` variables in the values are substituted.
+    /// The server's environment variables, with `${...}` variables substituted.
     pub env: BTreeMap<String, String>,
-    /// What a platform runs instead of the command, [`Self::args`] and
-    /// [`Self::env`]. A platform without an executable is refused.
+    /// Per-platform replacements; see [`PlatformConfig`].
     pub platform_overrides: BTreeMap<Platform, PlatformConfig>,
-    /// Platform metadata written verbatim (`_meta`), by reverse-DNS namespace,
-    /// each namespace holding an object: such as Windows' `package_family_name`
-    /// or a macOS bundle identifier.
+    /// Client-specific metadata (`_meta`), written verbatim: an object per
+    /// reverse-DNS namespace.
     pub meta: Map<String, Value>,
 }
 
 impl Default for BundleSpec {
-    /// A spec that still has to be filled in: the empty name, version and
-    /// description, and no executable, are what [`BundleSpec::validate`]
-    /// refuses.
+    /// An empty spec; the required fields still have to be filled in.
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -757,7 +707,7 @@ impl Default for BundleSpec {
 }
 
 impl Icon {
-    /// The manifest's entry for the icon, which the bundle holds as `name`.
+    /// The manifest entry for the icon, stored in the bundle as `name`.
     fn to_manifest(&self, name: &str) -> Value {
         let mut icon = Map::new();
         icon.insert("src".to_string(), json!(name));
@@ -783,10 +733,9 @@ impl Prompt {
 }
 
 impl BundleSpec {
-    /// The path of a platform's executable inside the bundle. A binary named
-    /// after the bundle is `server/<bundle name>`, and with several platforms
-    /// each further one is `server/<bundle name>-<platform>`, since a zip cannot
-    /// hold two files with one name. A binary that names itself keeps that name.
+    /// The path of a platform's binary in the bundle: its own name, else
+    /// `server/<name>` for the first platform and `server/<name>-<platform>` for
+    /// the others.
     pub(crate) fn executable_path(&self, platform: Platform) -> String {
         let named = self
             .executables
@@ -806,9 +755,7 @@ impl BundleSpec {
         format!("{SERVER_DIR}/{file}")
     }
 
-    /// The path of the manifest's `entry_point`: the binary of the first
-    /// platform in [`Platform`] order, which is the one clients start where no
-    /// platform override says otherwise.
+    /// The manifest's `entry_point`: the first platform's binary.
     pub fn entry_point(&self) -> Option<String> {
         self.executables
             .keys()
@@ -929,9 +876,8 @@ impl BundleSpec {
         config.insert("args".to_string(), Value::Array(args));
         config.insert("env".to_string(), json!(self.env));
 
-        // Each platform starts the binary built for it. The first one is the
-        // command above; every other platform whose binary is a different file
-        // overrides it, and what the spec overrides itself comes on top.
+        // Every other platform overrides the command with its own binary, unless
+        // the spec gives it a command of its own.
         let entry = self.entry_point();
         let mut overrides = Map::new();
         for platform in self.executables.keys().copied() {
@@ -962,9 +908,8 @@ impl BundleSpec {
         Value::Object(config)
     }
 
-    /// Where an icon or a screenshot goes in the bundle, which is what the
-    /// manifest points at: where a [`BundleFile`] of the same path puts it, or
-    /// else the root, under its own name.
+    /// An icon's or screenshot's name in the bundle: where a [`BundleFile`]
+    /// places it, else its file name at the root.
     fn bundle_name<'a>(&'a self, path: &'a Path) -> Option<&'a str> {
         match self.placed(path) {
             Some(file) => Some(&file.name),
@@ -972,13 +917,12 @@ impl BundleSpec {
         }
     }
 
-    /// The [`BundleFile`] that puts the file at `path` somewhere of its own.
+    /// The [`BundleFile`] for `path`, if any.
     fn placed(&self, path: &Path) -> Option<&BundleFile> {
         self.files.iter().find(|file| file.path == path)
     }
 
-    /// The icon the manifest's single `icon` field shows: the one the spec
-    /// names, or else the first icon that is not tied to a theme.
+    /// The manifest's `icon`: [`Self::icon`], else the first unthemed icon.
     fn manifest_icon(&self) -> Option<&str> {
         self.icon
             .as_deref()
@@ -991,11 +935,8 @@ impl BundleSpec {
             })
     }
 
-    /// The bundle's file name. For one platform
-    /// `<name>-<version>-<platform>-<arch>.mcpb`; for several, each platform
-    /// with the architecture given for it, such as
-    /// `<name>-<version>-darwin-arm64-win32-x64.mcpb`. A spec read from a
-    /// manifest knows no architecture, so each platform is only named.
+    /// The bundle's file name, such as `<name>-<version>-darwin-arm64.mcpb`, with
+    /// each platform and its architecture, if known.
     pub fn file_name(&self) -> String {
         let platforms = self
             .executables
@@ -1009,17 +950,12 @@ impl BundleSpec {
         format!("{}-{}-{platforms}.mcpb", self.name, self.version)
     }
 
-    /// Writes the bundle to `path`: `manifest.json`, the server with the
-    /// helpers and resources it uses under `server/`, and the icons, screenshots
-    /// and translations the manifest points at. Executables are written with
-    /// mode 755, everything else with 644.
+    /// Writes the bundle to `path`.
     ///
-    /// A spec that [`Self::validate`] does not accept, and an icon that is not
-    /// a PNG, are refused. The bundle is written under a temporary name and
-    /// moved into place, so a failed pack leaves no partial bundle behind.
+    /// Refuses a spec [`Self::validate`] rejects and icons that aren't PNGs.
+    /// Writes to a temporary file first, so a failure leaves no partial bundle.
     pub fn pack(&self, path: &Path) -> Result<(), Error> {
-        // Nothing is written before the files are listed, so a bundle written
-        // into a directory it packs does not pack itself.
+        // List the files before creating the bundle, so it can't pack itself.
         let files = self.ready(Some(path))?;
 
         let temp = path.with_extension(format!("{}.tmp", std::process::id()));
@@ -1038,19 +974,16 @@ impl BundleSpec {
         Ok(())
     }
 
-    /// Writes the bundle to anything that can be written and seeked, such as a
-    /// `Cursor` over a `Vec` in memory, and hands it back.
+    /// Writes the bundle to `writer`, such as a `Cursor<Vec<u8>>`, and returns it.
     ///
-    /// The same spec packs to the same bytes every time: the entries are written
-    /// in a fixed order, with a fixed timestamp and no dependence on the host.
+    /// The same spec always packs to the same bytes.
     pub fn pack_to<W: Write + Seek>(&self, writer: W) -> Result<W, Error> {
         let files = self.ready(None)?;
         self.write(writer, files)
     }
 
-    /// What has to be right before anything is written: the spec, the icons, and
-    /// the files with the names they go under. `writing` is the bundle itself,
-    /// which is left out of what it packs.
+    /// Checks the spec and icons and lists the files, leaving out `writing`, the
+    /// bundle itself.
     fn ready(&self, writing: Option<&Path>) -> Result<Vec<(String, PathBuf, u32)>, Error> {
         if let Err(problems) = self.validate() {
             return Err(Error::Invalid(problems));
@@ -1060,7 +993,7 @@ impl BundleSpec {
         self.contents(writing)
     }
 
-    /// The bundle itself, into anything that can be written and seeked.
+    /// Writes the zip.
     fn write<W: Write + Seek>(
         &self,
         writer: W,
@@ -1073,8 +1006,7 @@ impl BundleSpec {
 
         let plain = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
-            // A timestamp of its own would make the same spec pack to different
-            // bytes on every run.
+            // A fixed timestamp keeps the output reproducible.
             .last_modified_time(zip::DateTime::default());
 
         zip.start_file("manifest.json", plain)?;
@@ -1089,7 +1021,7 @@ impl BundleSpec {
         Ok(zip.finish()?)
     }
 
-    /// Refuses an icon that clients would not show: they only take PNG files.
+    /// Refuses icons that aren't PNGs, which clients don't show.
     fn check_icons(&self) -> Result<(), Error> {
         for icon in self.icon_files() {
             let mut file = fs::File::open(icon).map_err(|error| Error::read(icon, error))?;
@@ -1114,16 +1046,10 @@ impl BundleSpec {
             .chain(self.icons.iter().map(|icon| icon.path.as_path()))
     }
 
-    /// Every file of the bundle by archive name, with the mode it is written
-    /// with.
+    /// Every file of the bundle with its name and mode, sorted by name.
     ///
-    /// A file used twice - the same icon as `icon` and as an `icons` entry, one
-    /// binary for two platforms - is written once. Two different files, or one
-    /// file with two modes, would overwrite one another in the zip and are
-    /// refused. The files are sorted by their name in the bundle, so the same
-    /// spec packs the same bytes whatever order the directory they came from
-    /// listed them in. The bundle being written is left out, so a bundle packed
-    /// into a directory it packs does not pack the previous one.
+    /// The same file used twice is listed once; two different files or modes
+    /// under one name are refused. `writing` is left out.
     fn contents(&self, writing: Option<&Path>) -> Result<Vec<(String, PathBuf, u32)>, Error> {
         const EXECUTABLE: u32 = 0o755;
         const PLAIN: u32 = 0o644;
@@ -1137,8 +1063,6 @@ impl BundleSpec {
             ));
         }
 
-        // Helpers and resources sit next to the server, from where the manifest
-        // has clients run them.
         for (paths, mode) in [
             (&self.extra_executables, EXECUTABLE),
             (&self.resources, PLAIN),
@@ -1152,9 +1076,7 @@ impl BundleSpec {
             }
         }
 
-        // Icons, screenshots and translations keep the places the manifest
-        // points at. An icon or a screenshot that a `BundleFile` places is
-        // written there, with the files below.
+        // Icons and screenshots a `BundleFile` places are written with the files below.
         let screenshots = self.screenshots.iter().map(PathBuf::as_path);
         for path in self.icon_files().chain(screenshots) {
             if self.placed(path).is_none() {
@@ -1208,8 +1130,7 @@ impl BundleSpec {
 }
 
 impl Tree {
-    /// Every file of the tree, with its name inside the tree and its path on
-    /// disk, minus what a `.mcpbignore` and the format leave out.
+    /// The tree's files that aren't excluded, as (name in the tree, path on disk).
     fn files(&self) -> Result<Vec<(String, PathBuf)>, Error> {
         let exclusions = Exclusions::at(&self.path)?;
         let mut files = Vec::new();
@@ -1230,10 +1151,8 @@ impl Tree {
             self.path.join(name)
         };
 
-        // A symlink that leads back into a directory the walk is inside would
-        // never end, so it is cut. `ancestors` holds only the directories above
-        // this one: a directory reached again by another way - `lib/current`
-        // beside the `lib/v2` it points at - is packed under both names.
+        // Skip a symlink back into an ancestor, which would never end. A directory
+        // reached twice by different paths is packed under both names.
         let real = fs::canonicalize(&dir).map_err(|error| Error::read(&dir, error))?;
         if ancestors.contains(&real) {
             return Ok(());
@@ -1265,10 +1184,8 @@ impl Tree {
                 false => format!("{name}/{}", name_of(Path::new(&file_name))?),
             };
 
-            // A symlink is packed as what it points at. One that points at
-            // nothing is only a problem when it would be packed: whether it
-            // was meant as a file or a directory, a pattern that leaves either
-            // out takes it.
+            // Symlinks are followed. A dangling one is an error unless a pattern
+            // ignores it, as a file or a directory.
             let metadata = match fs::metadata(entry.path()) {
                 Ok(metadata) => metadata,
                 Err(_) if exclusions.excludes(&name, false) || exclusions.excludes(&name, true) => {
@@ -1298,8 +1215,7 @@ impl Tree {
     }
 }
 
-/// Whether two paths name the same file, which is not the same as the same
-/// spelling of it.
+/// Whether two paths resolve to the same file.
 fn same_file(one: &Path, other: &Path) -> bool {
     match (fs::canonicalize(one), fs::canonicalize(other)) {
         (Ok(one), Ok(other)) => one == other,
@@ -1307,13 +1223,12 @@ fn same_file(one: &Path, other: &Path) -> bool {
     }
 }
 
-/// The name a file of the bundle is written under, when its path has one the
-/// zip can hold.
+/// The file name of `path`, if it is UTF-8.
 fn archive_name(path: &Path) -> Option<&str> {
     path.file_name().and_then(|name| name.to_str())
 }
 
-/// The name a file of the bundle must be written under.
+/// The file name of `path`, or [`Error::Name`].
 fn name_of(path: &Path) -> Result<&str, Error> {
     archive_name(path).ok_or_else(|| Error::Name(path.to_path_buf()))
 }
@@ -1512,8 +1427,7 @@ mod tests {
             assert_eq!(Platform::parse(name), Some(platform), "{name}");
         }
 
-        // Only the manifest's spelling, so a release script that says `macos`
-        // hears about it rather than getting a bundle nobody can install.
+        // Only the manifest's spelling.
         for name in ["macos", "MacOS", "windows", "plan9", ""] {
             assert_eq!(Platform::parse(name), None, "{name}");
         }
@@ -1530,8 +1444,7 @@ mod tests {
             "${__dirname}/server/config.json".to_string(),
         );
 
-        // The arguments are the spec's own, in its order: the directory the
-        // client asks for is passed where the spec puts `${user_config...}`.
+        // The arguments keep the spec's order, `${user_config...}` included.
         assert_eq!(
             spec.manifest()["server"]["mcp_config"],
             json!({

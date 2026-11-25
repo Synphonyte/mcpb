@@ -1,9 +1,5 @@
-//! The manifests this crate writes, checked against the manifest format's own
-//! JSON schema - so "clients accept this" is not only what our own tests expect.
-//!
-//! The schema is vendored from the MCP Bundle repository; see
-//! `tests/schemas/README.md`. `jsonschema` is a dev-dependency: nothing in the
-//! published crate uses it.
+//! The manifests this crate writes, checked against the format's own JSON
+//! schema, vendored from the MCP Bundle repository (see `tests/schemas/README.md`).
 
 use std::collections::BTreeMap;
 
@@ -15,8 +11,7 @@ use serde_json::{Value, json};
 
 const SCHEMA: &str = include_str!("schemas/mcpb-manifest-v0.3.schema.json");
 
-/// The manifest of the spec's own `examples/calculator-rust`, as it is checked
-/// in there; see `tests/fixtures/README.md`.
+/// The upstream `examples/calculator-rust` manifest; see `tests/fixtures/README.md`.
 const REFERENCE: &str = include_str!("fixtures/calculator-rust.manifest.json");
 
 /// What the schema says is wrong with the manifest, if anything.
@@ -191,8 +186,7 @@ fn a_bundle_without_a_directory_prompt_fits_the_schema() {
     assert_fits(&spec);
 }
 
-/// If the schema did not load, or the validator stopped reporting, every test
-/// above would pass without checking anything.
+/// Guards against a schema that silently checks nothing.
 #[test]
 fn the_schema_refuses_what_clients_would() {
     let mut manifest = minimal().manifest();
@@ -207,8 +201,7 @@ fn the_schema_refuses_what_clients_would() {
     assert!(!problems(&manifest).is_empty());
 }
 
-/// What the spec's own example bundle packs to, without the `$schema` its
-/// checked-in manifest points at: this crate writes none.
+/// The upstream example manifest without its `$schema`, which this crate doesn't write.
 fn reference_manifest() -> Value {
     let mut manifest: Value = serde_json::from_str(REFERENCE).expect("the fixture is JSON");
     manifest
@@ -270,8 +263,7 @@ fn the_reference_bundle_packs_and_reads_back_the_same() {
     assert_eq!(read.manifest(), expected);
 }
 
-/// A manifest that reads back as the spec that wrote it, so a caller can take a
-/// bundle, edit it and write it again without the manifest drifting.
+/// A manifest reads back as the spec that wrote it.
 #[track_caller]
 fn assert_round_trips(spec: &BundleSpec) {
     let manifest = spec.manifest();

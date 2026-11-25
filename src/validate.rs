@@ -8,11 +8,9 @@ use serde_json::Value;
 use crate::{BundleSpec, Platform, PlatformConfig, UserConfigKind};
 
 impl BundleSpec {
-    /// Everything wrong with this spec, or `Ok` when a client would accept it.
+    /// Every problem clients would refuse, or `Ok`.
     ///
-    /// Every problem is reported, not just the first, so one call tells the
-    /// whole story. The file system is not consulted: whether the files exist
-    /// and share names is checked by [`Self::pack`].
+    /// Only the spec is checked; [`Self::pack`] checks the files themselves.
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut problems = Vec::new();
 
@@ -63,8 +61,7 @@ impl BundleSpec {
                 ));
             }
         }
-        // One binary may serve several platforms, but two of them may not be
-        // written under one name.
+        // Platforms may share a binary, but different binaries may not share a name.
         let mut written: BTreeMap<String, &PathBuf> = BTreeMap::new();
         for (platform, executable) in &self.executables {
             let path = self.executable_path(*platform);
@@ -298,8 +295,7 @@ impl BundleSpec {
         }
         problems.extend(check_env(&self.env, "env", &user_config));
         for (platform, config) in &self.platform_overrides {
-            // Every platform of the manifest starts a binary, so an override for
-            // one without is never read.
+            // An override for a platform without a binary is never used.
             if !self.executables.contains_key(platform) {
                 problems.push(format!(
                     "platform_overrides.{} does not apply: the bundle has no executable for it",
@@ -316,8 +312,7 @@ impl BundleSpec {
         }
     }
 
-    /// What the manifest's `user_config` declares, which `${user_config.<key>}`
-    /// may refer to.
+    /// The declared `user_config` keys.
     pub(crate) fn user_config_keys(&self) -> Vec<&str> {
         self.user_config
             .iter()
@@ -363,8 +358,8 @@ fn check_env(env: &BTreeMap<String, String>, at: &str, user_config: &[&str]) -> 
     problems
 }
 
-/// Refuses `${...}` that a client would not substitute, and
-/// `${user_config.<key>}` of a key the manifest does not declare.
+/// Refuses `${...}` variables clients don't substitute, and undeclared
+/// `${user_config.<key>}`.
 fn check_variables(what: &str, value: &str, user_config: &[&str]) -> Vec<String> {
     let mut problems = Vec::new();
     for variable in variables(value) {
@@ -386,8 +381,7 @@ fn check_variables(what: &str, value: &str, user_config: &[&str]) -> Vec<String>
     problems
 }
 
-/// The variables clients substitute, besides `${user_config.<key>}` of the keys
-/// the manifest declares.
+/// The variables clients substitute, besides `${user_config.<key>}`.
 const SUBSTITUTED: [&str; 7] = [
     "__dirname",
     "HOME",
@@ -398,7 +392,7 @@ const SUBSTITUTED: [&str; 7] = [
     "/",
 ];
 
-/// What the messages say is substituted.
+/// The substituted variables, as error messages list them.
 const SUBSTITUTED_LIST: &str = "${__dirname}, ${HOME}, ${DOCUMENTS}, ${DOWNLOADS}, ${DESKTOP}, ${pathSeparator}, ${/} and ${user_config.<key>}";
 
 /// What stands between `${` and `}` in a value.
@@ -429,8 +423,7 @@ fn names<S: AsRef<str>>(names: &[S]) -> String {
     }
 }
 
-/// Whether the key can name a `user_config` entry and the variable that refers
-/// to it.
+/// Whether the key is a valid `user_config` key.
 fn is_config_key(key: &str) -> bool {
     !key.is_empty()
         && key
@@ -438,8 +431,7 @@ fn is_config_key(key: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
-/// Whether the default value fits the entry: one value of its type, or a list of
-/// them when several may be given.
+/// Whether the default fits the entry's type, as a list if `multiple`.
 fn default_fits(kind: UserConfigKind, multiple: bool, default: &Value) -> bool {
     let one_fits = |value: &Value| match kind {
         UserConfigKind::String | UserConfigKind::Directory | UserConfigKind::File => {
@@ -479,7 +471,7 @@ fn is_email(value: &str) -> bool {
     }
 }
 
-/// Whether the name can be a bundle's, an executable's and a file name's own.
+/// Whether the name is a valid bundle, executable and file name.
 fn is_name(name: &str) -> bool {
     // `.` and `..` name directories, not files.
     !matches!(name, "" | "." | "..")
@@ -488,8 +480,8 @@ fn is_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// Whether the name is a file's path inside the bundle: relative, `/` between
-/// directories, and no part of it `.` or `..` that would lead elsewhere.
+/// Whether the name is a relative path inside the bundle, `/`-separated, with
+/// no empty, `.` or `..` segments.
 fn is_bundle_path(name: &str) -> bool {
     !name.contains('\\')
         && name
@@ -517,8 +509,7 @@ fn is_env_key(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Whether the locale reads like a BCP 47 language tag, as the manifest format
-/// asks for: `en`, `en-US`, `zh-Hans`, `de-DE-1996`.
+/// Whether the locale looks like a BCP 47 tag: `en`, `en-US`, `zh-Hans`, `de-DE-1996`.
 fn is_locale(locale: &str) -> bool {
     let mut parts = locale.split('-');
     let language = parts.next().unwrap_or_default();

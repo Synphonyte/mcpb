@@ -1,10 +1,10 @@
-//! What a directory tree is packed without: the format's default exclusions and
-//! the `.mcpbignore` at the directory's root.
+//! What a tree is packed without: the format's default exclusions and the
+//! `.mcpbignore` at its root.
 //!
-//! The patterns are the subset of `.gitignore` that the format's packaging
-//! documents: one pattern per line, `#` for a comment, `!` to take a file back,
-//! a trailing `/` for a directory, `*` and `?` within a name, `**` across names,
-//! and a pattern without a `/` that matches a name at any depth.
+//! Patterns are the `.gitignore` subset the format documents: one per line, `#`
+//! comments, `!` to re-include, a trailing `/` for directories, `*` and `?`
+//! within a name, `**` across names. A pattern with a leading or inner `/` is
+//! anchored to the root; any other matches at any depth.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::Error;
 
-/// The files the format packs without being told, from its CLI's documentation.
+/// The format's default exclusions, from its CLI's documentation.
 const EXCLUDED_BY_DEFAULT: [&str; 21] = [
     ".DS_Store",
     "Thumbs.db",
@@ -34,11 +34,11 @@ const EXCLUDED_BY_DEFAULT: [&str; 21] = [
     ".env.*.local",
     "package-lock.json",
     "yarn.lock",
-    // Not the format's own list: the ignore file is packaging, not server.
+    // Not in the format's list, but the ignore file is not part of the server.
     ".mcpbignore",
 ];
 
-/// What a directory tree is packed without.
+/// The exclusions for one tree.
 #[derive(Debug, Default)]
 pub(crate) struct Exclusions {
     rules: Vec<Rule>,
@@ -47,18 +47,16 @@ pub(crate) struct Exclusions {
 #[derive(Debug)]
 struct Rule {
     pattern: String,
-    /// Takes a file back in rather than leaving it out.
+    /// A `!` pattern, which re-includes.
     negated: bool,
-    /// Matches only a directory, and with it everything in it.
+    /// Matches only directories, and everything in them.
     directory: bool,
-    /// Matches from the tree's root only, as a pattern that starts with `/` or
-    /// has one in its middle does; any other matches a name at any depth.
+    /// Matches from the root only: the pattern has a leading or inner `/`.
     anchored: bool,
 }
 
 impl Exclusions {
-    /// The default exclusions, plus the lines of the `.mcpbignore` at the root
-    /// of `dir`, if it has one.
+    /// The default exclusions plus `dir/.mcpbignore`, if present.
     pub(crate) fn at(dir: &Path) -> Result<Self, Error> {
         let mut rules = EXCLUDED_BY_DEFAULT
             .iter()
@@ -81,9 +79,8 @@ impl Exclusions {
         Ok(Self { rules })
     }
 
-    /// Whether the file or directory, named as it would be in the bundle, is
-    /// packed. A directory that is left out takes what is in it with it, unless
-    /// a later `!` pattern takes a file back in.
+    /// Whether `name`, relative to the tree's root, is left out. An excluded
+    /// directory excludes its contents unless a later `!` pattern re-includes them.
     pub(crate) fn excludes(&self, name: &str, directory: bool) -> bool {
         let parts = name.split('/').collect::<Vec<_>>();
         let mut excluded = false;
@@ -104,8 +101,8 @@ impl Exclusions {
         excluded
     }
 
-    /// Whether a `!` pattern could take a file back in from below a directory,
-    /// which is the only reason to look inside one that is left out.
+    /// Whether a `!` pattern could re-include a file, the only reason to walk an
+    /// excluded directory.
     pub(crate) fn keeps_files(&self) -> bool {
         self.rules.iter().any(|rule| rule.negated)
     }
@@ -141,13 +138,12 @@ impl Rule {
     }
 }
 
-/// Whether `name`, relative to the tree's root, matches `pattern`: from the
-/// root when it is `anchored`, else wherever on the way.
+/// Whether `name` matches `pattern`: from the root if `anchored`, else at any depth.
 fn matches_pattern(pattern: &str, anchored: bool, name: &str) -> bool {
     let parts = name.split('/').collect::<Vec<_>>();
 
     if !anchored {
-        // Any one of the names on the way, as a `.gitignore` does.
+        // Any one segment, as in `.gitignore`.
         return parts.iter().any(|part| matches_segment(pattern, part));
     }
 
@@ -168,8 +164,7 @@ fn matches_parts(pattern: &[&str], parts: &[&str]) -> bool {
     }
 }
 
-/// Whether one name matches one pattern, `*` standing for any run of
-/// characters and `?` for one.
+/// Whether one path segment matches a glob of `*` and `?`.
 fn matches_segment(pattern: &str, name: &str) -> bool {
     fn matches(pattern: &[char], name: &[char]) -> bool {
         match pattern.split_first() {
