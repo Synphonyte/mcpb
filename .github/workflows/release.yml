@@ -20,14 +20,12 @@ name: Release
 # instead of storing one in the repository's secrets.
 #
 # Once the release exists, the `mcpb` binary is built for each platform and
-# attached to it, which `cargo binstall mcpb` and the GitHub Action download.
-# Then the major tag (`v0`) moves to this release, so `uses: Synphonyte/mcpb@v0`
-# runs it.
+# attached to it, which `cargo binstall mcpb` and the GitHub Action
+# (Synphonyte/mcpb-pack) download.
 
 on:
   push:
-    # Not `v*`: the `v0` tag the action moves would match it.
-    tags: ["v*.*.*"]
+    tags: ["v*"]
   # For a retry against an existing tag:
   #   gh workflow run release.yml --ref v0.2.0
   workflow_dispatch:
@@ -198,18 +196,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" "${{ steps.archive.outputs.archive }}" --clobber
 
-  # Moves `v0` (the major version of the tag) to this release once its binaries
-  # are attached, so `uses: Synphonyte/mcpb@v0` runs the newest 0.x release.
-  # A tag pushed with the workflow's token starts no workflow of its own.
-  action-tag:
-    needs: binaries
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # to move the tag
-    steps:
-      - uses: actions/checkout@v6
-      - name: Move the major version tag
-        run: |
-          major="${GITHUB_REF_NAME%%.*}"
-          git tag -f "$major" "$GITHUB_SHA"
-          git push -f origin "refs/tags/$major"

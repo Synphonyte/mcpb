@@ -14,8 +14,9 @@ All notable changes to this crate are documented here. It follows
   such as `target/release/my-server`, as the entry point.
 - `mcpb pack -o <directory>` writes the bundle into the directory, named after
   the spec.
-- A GitHub Action, `uses: Synphonyte/mcpb@v0`, that packs and checks the bundle
-  for the runner's platform.
+- The GitHub Action [mcpb-pack](https://github.com/Synphonyte/mcpb-pack)
+  is linked from the README: it packs and checks the bundle for the runner's
+  platform.
 - The [mcpb-template](https://github.com/Synphonyte/mcpb-template) repository
   is linked from the README: a minimal `rmcp` server whose release workflow
   attaches a bundle for each platform to a GitHub release.

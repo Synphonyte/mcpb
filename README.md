@@ -110,44 +110,17 @@ The same information is available to Rust code through [`Bundle`].
 
 ## GitHub Action
 
-`uses: Synphonyte/mcpb@v0` packs the binary a job just built for the runner's OS and CPU, checks
-the bundle and outputs its path, so a matrix of runners gives one bundle per platform:
+[`Synphonyte/mcpb-pack`](https://github.com/Synphonyte/mcpb-pack) runs `mcpb pack` in a workflow:
+it packs the binary a job just built for the runner's OS and CPU, so a matrix of runners gives
+one bundle per platform.
 
 ```yaml
-jobs:
-  bundle:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - run: cargo build --release --locked
-      - uses: Synphonyte/mcpb@v0
-        id: mcpb
-        with:
-          executable: target/release/my-server # `.exe` is added on Windows
-          out: dist/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.mcpb.outputs.name }}
-          path: ${{ steps.mcpb.outputs.bundle }}
+- run: cargo build --release --locked
+- uses: Synphonyte/mcpb-pack@v0
+  with:
+    executable: target/release/my-server
+    out: dist/
 ```
-
-| Input | Default | |
-| --- | --- | --- |
-| `manifest` | `manifest.json` | the manifest, or its directory |
-| `executable` | the entry point | the built binary, relative to the workspace |
-| `platform` | the runner's OS | `darwin`, `linux` or `win32` |
-| `arch` | the runner's CPU | `x64`, `arm64` …; set it when cross-compiling |
-| `out` | the bundle's name | a file, or a directory ending in `/` |
-| `args` | | more `mcpb pack` arguments, such as `--tree assets` |
-| `mcpb-version` | the action's | another release, or `source` to build the action's checkout |
-
-The outputs are `bundle`, the bundle's path, and `name`, its file name. The action downloads the
-`mcpb` binary of its own release, and builds it with cargo where there is none. The template's
-[release workflow](https://github.com/Synphonyte/mcpb-template/blob/main/.github/workflows/release.yml)
-shows the whole thing: six targets, then one GitHub release with every bundle.
 
 ## Bundle layout
 
@@ -314,8 +287,7 @@ a GitHub release with that changelog section as its notes. It refuses a tag that
 crate's version or a changelog entry without a date, and a re-run skips publishing a version
 crates.io already has. It then attaches the `mcpb` binary for macOS, Linux (static, musl) and
 Windows, each on x64 and arm64, as `mcpb-<target>.tgz` (`.zip` on Windows), which is what
-`cargo binstall` looks for, and moves the `v0` tag that `uses: Synphonyte/mcpb@v0` names to the
-release.
+`cargo binstall` and the GitHub Action look for.
 
 ## Changelog
 
