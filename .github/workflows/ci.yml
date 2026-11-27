@@ -1,12 +1,14 @@
 name: CI
 
-# Checks every push to main and every pull request. The crate branches on the
-# target OS (`Platform::host`, the `.exe` suffix, zip file modes), so the tests
-# run on all three platforms; a Mac alone cannot see Windows breakage.
+# Checks every pull request - not every push to main: the release workflow runs
+# this same matrix before it publishes anything, so a push that skips review is
+# checked there instead of twice.
+#
+# The crate branches on the target OS (`Platform::host`, the `.exe` suffix, zip
+# file modes), so the tests run on all three platforms; a Mac alone cannot see
+# Windows breakage.
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 

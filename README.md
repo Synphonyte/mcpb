@@ -1,6 +1,6 @@
 # mcpb
 
-[![CI](https://github.com/Synphonyte/mcpb/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Synphonyte/mcpb/actions/workflows/ci.yml)
+[![CI](https://github.com/Synphonyte/mcpb/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/Synphonyte/mcpb/actions/workflows/ci.yml)
 
 Pack a local MCP server as an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb) (`.mcpb`): a
 zip with a `manifest.json` and the server binary, which clients such as Claude Desktop install with
@@ -255,9 +255,11 @@ from the MCP Bundle repository), and round-trips the upstream
 [`examples/calculator-rust`](https://github.com/modelcontextprotocol/mcpb/tree/main/examples/calculator-rust)
 manifest and `.mcpbignore` (vendored in `tests/fixtures/`).
 
-CI runs on Linux, macOS and Windows, x64 and arm64, and on Rust 1.89 with the committed
-`Cargo.lock`. On each runner it also packs real bundles with the library and the CLI, and has the
-official `mcpb` CLI unpack and validate them.
+CI checks pull requests - the badge above is the latest one - on Linux, macOS and Windows, x64 and
+arm64, and on Rust 1.89, with the committed `Cargo.lock`. On each runner it also packs real bundles
+with the library and the CLI, and has the official `mcpb` CLI unpack and validate them. A tag runs
+that same test matrix before the release workflow publishes, so a push straight to `main` is checked
+there too.
 
 ## Not supported
 

@@ -19,6 +19,11 @@ name: Release
 # The workflow exchanges a short-lived GitHub OIDC token for a crates.io token
 # instead of storing one in the repository's secrets.
 #
+# Every platform's tests run before the crate is published, because CI only runs
+# on pull requests: a tag pushed straight to main would otherwise ship untested,
+# and the failures that matter are the platform-specific ones a single runner
+# cannot see.
+#
 # Once the release exists, the `mcpb` binary is built for each platform and
 # attached to it, which `cargo binstall mcpb` and the GitHub Action
 # (Synphonyte/mcpb-pack) download.
@@ -42,7 +47,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The same matrix CI runs on pull requests, so nothing reaches crates.io that
+  # CI would have refused.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # The arm64 runners build natively, so Linux and Windows arm64 are
+        # covered without a cross toolchain.
+        os:
+          [
+            ubuntu-latest,
+            ubuntu-24.04-arm,
+            macos-latest,
+            windows-latest,
+            windows-11-arm,
+          ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -67,8 +96,6 @@ jobs:
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - run: cargo test
 
       # crates.io refuses a version it already has, which would fail this job and
       # keep the release job from running. So look first, and let a re-run finish
