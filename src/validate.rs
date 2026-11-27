@@ -28,17 +28,17 @@ impl BundleSpec {
                 && !is_name(arch)
             {
                 problems.push(format!(
-                        "the {} executable's arch {arch:?} may only hold ASCII letters, digits, '-', '_' and '.'",
-                        platform.as_str()
-                    ));
+                    "the {} executable's arch {arch:?} may only hold ASCII letters, digits, '-', '_' and '.'",
+                    platform.as_str()
+                ));
             }
             if let Some(name) = &executable.name
                 && !name.split('/').all(is_name)
             {
                 problems.push(format!(
-                        "the {} executable's name {name:?} may only hold ASCII letters, digits, '-', '_' and '.', and '/' between directories",
-                        platform.as_str()
-                    ));
+                    "the {} executable's name {name:?} may only hold ASCII letters, digits, '-', '_' and '.', and '/' between directories",
+                    platform.as_str()
+                ));
             }
         }
         for tree in &self.trees {

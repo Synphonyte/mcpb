@@ -19,10 +19,11 @@ name: Release
 # The workflow exchanges a short-lived GitHub OIDC token for a crates.io token
 # instead of storing one in the repository's secrets.
 #
-# Every platform's tests run before the crate is published, because CI only runs
-# on pull requests: a tag pushed straight to main would otherwise ship untested,
-# and the failures that matter are the platform-specific ones a single runner
-# cannot see.
+# The whole CI workflow runs before the crate is published, because CI only runs
+# on pull requests: a tag pushed straight to main would otherwise ship without
+# the format, lint, MSRV, doc, pack and official-CLI checks. The failures that
+# matter are the platform-specific ones, which a single runner cannot see, so
+# the release calls CI rather than repeating a part of it.
 #
 # Once the release exists, the `mcpb` binary is built for each platform and
 # attached to it, which `cargo binstall mcpb` and the GitHub Action
@@ -47,31 +48,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The same matrix CI runs on pull requests, so nothing reaches crates.io that
-  # CI would have refused.
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        # The arm64 runners build natively, so Linux and Windows arm64 are
-        # covered without a cross toolchain.
-        os:
-          [
-            ubuntu-latest,
-            ubuntu-24.04-arm,
-            macos-latest,
-            windows-latest,
-            windows-11-arm,
-          ]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked
+  # The checks CI runs on pull requests, so nothing reaches crates.io that CI
+  # would have refused.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
   publish:
-    needs: test
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

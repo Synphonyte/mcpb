@@ -156,28 +156,24 @@ fn a_command_it_does_not_have_says_so() {
 }
 
 #[test]
-fn it_packs_one_platform_with_a_binary_from_elsewhere() {
+fn it_packs_one_platform_with_a_binary_from_where_it_runs() {
     let dir = tempfile::TempDir::new().expect("a temporary directory");
     let example = example(&dir.path().join("example"));
-    // Where cargo puts the binary, not where the manifest says it is.
-    let built = example.join("target/release/calculator");
+    // Where cargo puts the binary - beside the workspace, not the member whose
+    // manifest is packed - as it is named from where the command runs.
+    let built = dir.path().join("target/release/calculator");
     fs::create_dir_all(built.parent().expect("a parent")).expect("the directory");
     fs::write(&built, "\x7fELF built by cargo").expect("the binary");
     fs::remove_file(example.join("server/mcp-calculator")).expect("removed");
 
     let bundle = dir.path().join("linux.mcpb");
-    let output = mcpb(&[
-        "pack",
-        example.to_str().expect("UTF-8"),
-        "--platform",
-        "linux",
-        "--arch",
-        "x64",
-        "--executable",
-        "target/release/calculator",
-        "-o",
-        bundle.to_str().expect("UTF-8"),
-    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_mcpb"))
+        .args(["pack", "example", "--platform", "linux", "--arch", "x64"])
+        .args(["--executable", "target/release/calculator"])
+        .args(["-o", bundle.to_str().expect("UTF-8")])
+        .current_dir(dir.path())
+        .output()
+        .expect("the binary runs");
     assert!(output.status.success(), "{}", text(&output));
 
     let bundle = mcpb::Bundle::open(&bundle).expect("the bundle");
@@ -214,11 +210,11 @@ fn it_names_a_bundle_after_the_one_platform() {
         text(&output)
     );
 
-    // A directory to write to is named into, too.
-    fs::create_dir(dir.path().join("dist")).expect("the directory");
+    // A directory to write to is named into, and one that ends with a
+    // separator is made rather than mistaken for a file called `dist`.
     let output = Command::new(env!("CARGO_BIN_EXE_mcpb"))
         .args(["pack", "example", "--platform", "linux", "--arch", "x64"])
-        .args(["-o", "dist"])
+        .args(["-o", "dist/"])
         .current_dir(dir.path())
         .output()
         .expect("the binary runs");
@@ -227,6 +223,26 @@ fn it_names_a_bundle_after_the_one_platform() {
         dir.path()
             .join("dist/calculator-rust-1.0.0-linux-x64.mcpb")
             .is_file(),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn a_bundle_it_cannot_write_names_the_path() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let example = example(&dir.path().join("example"));
+    let bundle = dir.path().join("missing/bundle.mcpb");
+
+    let output = mcpb(&[
+        "pack",
+        example.to_str().expect("UTF-8"),
+        "-o",
+        bundle.to_str().expect("UTF-8"),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains(&format!("can't write {}", bundle.display())),
         "{}",
         text(&output)
     );

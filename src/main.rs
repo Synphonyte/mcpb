@@ -18,11 +18,13 @@ usage:
   mcpb info <bundle.mcpb>
 
 pack:
-  Writes the bundle a manifest describes. Paths in the manifest are read
-  relative to it, and the bundle is named after the spec
+  Writes the bundle a manifest describes. Its own paths are read relative to
+  the manifest; the paths given here, -o and --executable, are read from where
+  you run mcpb. The bundle is named after the spec
   (<name>-<version>-<platform>-<arch>.mcpb) unless -o says where to put it.
 
-  -o, --out <path>   where to write the bundle, or the directory to write it to
+  -o, --out <path>   where to write the bundle, or the directory to write it
+                     to; a path ending with / is a directory, made if missing
       --arch <arch>  the CPU architecture of the binaries, such as arm64
       --platform <platform>
                      pack only this platform (darwin, linux or win32) of those
@@ -30,7 +32,8 @@ pack:
       --executable <file>
                      the binary to pack as the entry point, such as
                      target/release/my-server, instead of the file the manifest
-                     names; needs --platform when the manifest names several
+                     names; read from where you run mcpb, and needs --platform
+                     when the manifest names several
       --tree <dir>   the files of <dir>, packed into server/ as they are laid out
                      and written as programs - `--tree server` for a directory of
                      that name; relative to the manifest, as its paths are
@@ -62,6 +65,10 @@ fn main() -> ExitCode {
             eprintln!("mcpb: {error}");
             ExitCode::FAILURE
         }
+        Err(Failure::Message(problem)) => {
+            eprintln!("mcpb: {problem}");
+            ExitCode::FAILURE
+        }
         Err(Failure::Invalid { what, problems }) => {
             eprintln!("mcpb: {} is not valid:", what.display());
             for problem in problems {
@@ -77,6 +84,9 @@ fn main() -> ExitCode {
 enum Failure {
     Usage(String),
     Failed(Error),
+    /// A failed operation whose message main can complete, such as the path it
+    /// tried to write.
+    Message(String),
     Invalid {
         what: PathBuf,
         problems: Vec<String>,
@@ -248,7 +258,10 @@ fn pack(
     if let Some(executable) = executable {
         let mut executables = spec.executables.values_mut();
         match (executables.next(), executables.next()) {
-            (Some(only), None) => only.path = dir.join(executable),
+            // A binary `cargo` built is named from where the command runs, as
+            // `-o` is, and not from where the manifest lives: in a workspace
+            // the manifest is in a member and `target/` is at the root.
+            (Some(only), None) => only.path = executable,
             _ => {
                 return Err(Failure::Usage(
                     "--executable needs --platform, since the manifest names several platforms"
@@ -269,11 +282,23 @@ fn pack(
     }));
 
     let out = match out {
-        Some(dir) if dir.is_dir() => dir.join(spec.file_name()),
+        Some(dir) if is_directory(&dir) => {
+            fs::create_dir_all(&dir).map_err(|error| {
+                Failure::Message(format!("can't create {}: {error}", dir.display()))
+            })?;
+            dir.join(spec.file_name())
+        }
         Some(out) => out,
         None => PathBuf::from(spec.file_name()),
     };
-    spec.pack(&out)?;
+    if let Err(error) = spec.pack(&out) {
+        return Err(match error {
+            Error::Write { source } => {
+                Failure::Message(format!("can't write {}: {source}", out.display()))
+            }
+            error => Failure::Failed(error),
+        });
+    }
 
     let bundle = Bundle::open(&out)?;
     Ok(format!(
@@ -304,6 +329,18 @@ fn read_manifest(path: &Path) -> Result<BundleSpec, Failure> {
     })?;
 
     Ok(BundleSpec::from_manifest(&manifest)?)
+}
+
+/// Whether `path` names a directory to write into: one that exists, or one
+/// whose name ends with a separator, as `dist/` does.
+fn is_directory(path: &Path) -> bool {
+    path.is_dir()
+        || path
+            .as_os_str()
+            .to_string_lossy()
+            .chars()
+            .next_back()
+            .is_some_and(std::path::is_separator)
 }
 
 fn base_dir(path: &Path) -> PathBuf {

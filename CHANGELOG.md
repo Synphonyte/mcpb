@@ -4,6 +4,30 @@ All notable changes to this crate are documented here. It follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** `mcpb pack --executable <file>` now resolves the file from where
+  the command runs, as `-o` does, instead of from the manifest's directory. In a
+  Cargo workspace the manifest is in a member and `target/` is at the root, so
+  the binary cargo built is no longer found (`crates/srv/target/release/...`).
+  Pass the path as it is from the workspace root, as `target/release/...`.
+
+### Fixed
+
+- `mcpb pack -o dist/` creates the directory when it does not exist yet, rather
+  than trying to write a file called `dist`.
+- A bundle that cannot be written names the path it tried to write, not just
+  the operating system's error.
+- The release workflow now runs the whole CI workflow - formatting, clippy, the
+  Rust 1.89 build, the docs build, and packing bundles that the official `mcpb`
+  CLI validates - before it publishes. It used to run only `cargo test`, so a
+  tag could raise the minimum Rust version or break bundles for the official
+  CLI and still be released.
+- `.github/scripts/check-upstream-specs.sh` runs on macOS's bash 3.2: it uses a
+  `while read` loop instead of `mapfile`, which bash 3.2 lacks.
+
 ## 0.3.1 - 2026-11-27
 
 ### Fixed

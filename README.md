@@ -84,12 +84,13 @@ mcpb validate my-server.mcpb
 mcpb info my-server.mcpb
 ```
 
-- `pack` resolves paths relative to the manifest and names the bundle
+- `pack` resolves the manifest's paths relative to the manifest and names the bundle
   `<name>-<version>-<platform>-<arch>.mcpb` unless `-o` names a file rather than a directory.
-  `--platform` packs only one of the platforms the manifest lists, as a build for one OS needs,
-  and `--executable` takes the binary from where cargo built it rather than the entry point's
-  path. `--tree dir` packs a directory into `server/` as executables, honouring `.mcpbignore`;
-  `--data dir` packs it as plain files.
+  A `-o` directory written with a trailing `/` is created if it does not exist. `--platform` packs
+  only one of the platforms the manifest lists, as a build for one OS needs, and `--executable`
+  takes the binary `cargo` built, relative to where you run `mcpb` as `-o` is, rather than the
+  entry point's path. `--tree dir` packs a directory into `server/` as executables, honouring
+  `.mcpbignore`; `--data dir` packs it as plain files.
 - `validate` checks a manifest, or a bundle and that it holds the files its manifest names.
 - `info` prints what a bundle holds, with `*` marking executables:
 
@@ -259,8 +260,8 @@ manifest and `.mcpbignore` (vendored in `tests/fixtures/`).
 CI checks pull requests - the badge above is the latest one - on Linux, macOS and Windows, x64 and
 arm64, and on Rust 1.89, with the committed `Cargo.lock`. On each runner it also packs real bundles
 with the library and the CLI, and has the official `mcpb` CLI unpack and validate them. A tag runs
-that same test matrix before the release workflow publishes, so a push straight to `main` is checked
-there too.
+the whole of CI again before the release workflow publishes, so a push straight to `main` is
+checked there too.
 
 ## Not supported
 

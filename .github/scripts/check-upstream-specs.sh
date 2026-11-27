@@ -40,7 +40,10 @@ for i in $(seq 0 $((count - 1))); do
   pattern="$(jq -r .tag_pattern <<<"$spec")"
   pinned_commit="$(jq -r .pinned.commit <<<"$spec")"
   pinned_tag="$(jq -r .pinned.tag <<<"$spec")"
-  mapfile -t paths < <(jq -r '.paths[]' <<<"$spec")
+  # A `while read` loop, not `mapfile`: macOS ships bash 3.2, which has no
+  # `mapfile`, and the `--bump` step this script tells you to run is local.
+  paths=()
+  while IFS= read -r path; do paths+=("$path"); done < <(jq -r '.paths[]' <<<"$spec")
 
   # Commits and trees only: enough for the log, and quick even for a big repo.
   dir="$work/$i"
