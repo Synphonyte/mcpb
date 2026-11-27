@@ -19,8 +19,11 @@ on:
 permissions:
   contents: read
 
+# Not `github.workflow` in the group: a called workflow sees the caller's name,
+# so the release's group and this one would be the same, and a run that waits
+# for itself deadlocks and cancels. Name the group after this workflow instead.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:

@@ -11,8 +11,9 @@ All notable changes to this crate are documented here. It follows
 - **Breaking:** `mcpb pack --executable <file>` now resolves the file from where
   the command runs, as `-o` does, instead of from the manifest's directory. In a
   Cargo workspace the manifest is in a member and `target/` is at the root, so
-  the binary cargo built is no longer found (`crates/srv/target/release/...`).
-  Pass the path as it is from the workspace root, as `target/release/...`.
+  the binary cargo built there is now found; pass the path as it is from the
+  workspace root, as `target/release/...`. This breaks a path that was written
+  relative to the manifest, so the next release is 0.4.0.
 
 ### Fixed
 
@@ -27,6 +28,10 @@ All notable changes to this crate are documented here. It follows
   CLI and still be released.
 - `.github/scripts/check-upstream-specs.sh` runs on macOS's bash 3.2: it uses a
   `while read` loop instead of `mapfile`, which bash 3.2 lacks.
+- The CI workflow has a concurrency group of its own instead of taking the
+  caller's name. Called from the release, it shared the release's group and
+  would have waited for a run that was itself waiting for CI - a deadlock that
+  cancels as soon as it starts.
 
 ## 0.3.1 - 2026-11-27
 
