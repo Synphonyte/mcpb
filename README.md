@@ -116,7 +116,7 @@ one bundle per platform.
 
 ```yaml
 - run: cargo build --release --locked
-- uses: Synphonyte/mcpb-pack@v0
+- uses: Synphonyte/mcpb-pack@v1
   with:
     executable: target/release/my-server
     out: dist/
