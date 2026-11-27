@@ -27,7 +27,9 @@ pkg-fmt = "zip"
 semver = "1"
 serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
-zip = { version = "9", default-features = false, features = ["deflate"] }
+# `deflate` would also pull zopfli, which only applies above level 9 -
+# and this crate writes every entry at flate2's default level.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 jsonschema = "0.63"
