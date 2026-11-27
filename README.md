@@ -72,7 +72,7 @@ but not per CPU architecture, so a bundle usually targets one OS and architectur
 `executables` several platforms and each one starts its own binary through `platform_overrides`;
 `BundleSpec::file_name` names the bundle after them.
 
-Requires Rust 1.85 (edition 2024). Published on [crates.io](https://crates.io/crates/mcpb), with
+Requires Rust 1.89, which `zip` needs. Published on [crates.io](https://crates.io/crates/mcpb), with
 API docs on [docs.rs](https://docs.rs/mcpb). The API is not stable before 1.0.
 
 ## Command line
@@ -255,7 +255,7 @@ from the MCP Bundle repository), and round-trips the upstream
 [`examples/calculator-rust`](https://github.com/modelcontextprotocol/mcpb/tree/main/examples/calculator-rust)
 manifest and `.mcpbignore` (vendored in `tests/fixtures/`).
 
-CI runs on Linux, macOS and Windows, x64 and arm64, and on Rust 1.85 with the committed
+CI runs on Linux, macOS and Windows, x64 and arm64, and on Rust 1.89 with the committed
 `Cargo.lock`. On each runner it also packs real bundles with the library and the CLI, and has the
 official `mcpb` CLI unpack and validate them.
 

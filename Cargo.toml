@@ -7,18 +7,8 @@ license = "MIT"
 name = "mcpb"
 readme = "README.md"
 repository = "https://github.com/Synphonyte/mcpb"
-rust-version = "1.85"
+rust-version = "1.89"
 version = "0.2.1"
-
-[dependencies]
-semver = "1"
-serde = "1"
-serde_json = { version = "1", features = ["preserve_order"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
-
-[dev-dependencies]
-jsonschema = "0.63"
-tempfile = "3"
 
 # `cargo binstall mcpb` downloads the binary the release workflow attaches to
 # the GitHub release instead of compiling the crate.
@@ -32,3 +22,13 @@ pkg-fmt = "zip"
 
 [package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
 pkg-fmt = "zip"
+
+[dependencies]
+semver = "1"
+serde = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+jsonschema = "0.63"
+tempfile = "3"

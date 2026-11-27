@@ -24,21 +24,21 @@ impl BundleSpec {
             problems.push("the bundle runs on no platform: give it an executable".to_string());
         }
         for (platform, executable) in &self.executables {
-            if let Some(arch) = &executable.arch {
-                if !is_name(arch) {
-                    problems.push(format!(
+            if let Some(arch) = &executable.arch
+                && !is_name(arch)
+            {
+                problems.push(format!(
                         "the {} executable's arch {arch:?} may only hold ASCII letters, digits, '-', '_' and '.'",
                         platform.as_str()
                     ));
-                }
             }
-            if let Some(name) = &executable.name {
-                if !name.split('/').all(is_name) {
-                    problems.push(format!(
+            if let Some(name) = &executable.name
+                && !name.split('/').all(is_name)
+            {
+                problems.push(format!(
                         "the {} executable's name {name:?} may only hold ASCII letters, digits, '-', '_' and '.', and '/' between directories",
                         platform.as_str()
                     ));
-                }
             }
         }
         for tree in &self.trees {
@@ -81,15 +81,15 @@ impl BundleSpec {
         if self.author.name.trim().is_empty() {
             problems.push("the author has no name".to_string());
         }
-        if let Some(email) = &self.author.email {
-            if !is_email(email) {
-                problems.push(format!("author email {email:?} is not an email address"));
-            }
+        if let Some(email) = &self.author.email
+            && !is_email(email)
+        {
+            problems.push(format!("author email {email:?} is not an email address"));
         }
-        if let Some(url) = &self.author.url {
-            if !is_uri(url) {
-                problems.push(format!("author url {url:?} is not a URL"));
-            }
+        if let Some(url) = &self.author.url
+            && !is_uri(url)
+        {
+            problems.push(format!("author url {url:?} is not a URL"));
         }
         if self
             .long_description
@@ -167,21 +167,21 @@ impl BundleSpec {
                     entry.key
                 ));
             }
-            if let (Some(min), Some(max)) = (entry.min, entry.max) {
-                if min > max {
-                    problems.push(format!(
-                        "user_config {:?} has min {min} above max {max}",
-                        entry.key
-                    ));
-                }
+            if let (Some(min), Some(max)) = (entry.min, entry.max)
+                && min > max
+            {
+                problems.push(format!(
+                    "user_config {:?} has min {min} above max {max}",
+                    entry.key
+                ));
             }
-            if let Some(default) = &entry.default {
-                if !default_fits(entry.kind, entry.multiple, default) {
-                    problems.push(format!(
-                        "user_config {:?} has a default that does not fit its type",
-                        entry.key
-                    ));
-                }
+            if let Some(default) = &entry.default
+                && !default_fits(entry.kind, entry.multiple, default)
+            {
+                problems.push(format!(
+                    "user_config {:?} has a default that does not fit its type",
+                    entry.key
+                ));
             }
         }
 

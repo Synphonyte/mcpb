@@ -71,8 +71,15 @@ impl Bundle {
             if file.is_dir() {
                 continue;
             }
+            // `name` decodes the bytes the way the format allows - UTF-8, or
+            // CP437 where they are not - so a name that is neither is refused
+            // rather than guessed at.
+            let name = file.name().map_err(|error| Error::Bundle {
+                path: path.clone(),
+                reason: format!("a file has no UTF-8 name: {error}"),
+            })?;
             entries.push(Entry {
-                name: file.name().to_string(),
+                name: name.into_owned(),
                 size: file.size(),
                 executable: file.unix_mode().is_some_and(|mode| mode & 0o111 != 0),
             });

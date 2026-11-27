@@ -1316,7 +1316,10 @@ mod tests {
         spec(Platform::Darwin, binary).pack(&bundle).unwrap();
 
         let mut zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
-        let mut names: Vec<_> = zip.file_names().map(str::to_string).collect();
+        let mut names: Vec<_> = zip
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
         names.sort();
         assert_eq!(names, ["manifest.json", "server/test-server"]);
 
@@ -1629,7 +1632,10 @@ mod tests {
         spec.pack(&bundle).unwrap();
 
         let mut zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
-        let mut names: Vec<_> = zip.file_names().map(str::to_string).collect();
+        let mut names: Vec<_> = zip
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
         names.sort();
         assert_eq!(
             names,
@@ -1666,7 +1672,10 @@ mod tests {
         assert_eq!(spec.manifest()["icons"][0]["src"], "icon.png");
 
         let zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
-        let icons = zip.file_names().filter(|name| *name == "icon.png").count();
+        let icons = zip
+            .file_names()
+            .filter(|name| *name.as_ref().unwrap() == "icon.png")
+            .count();
         assert_eq!(icons, 1);
     }
 
@@ -1927,7 +1936,10 @@ mod tests {
         spec.pack(&bundle).unwrap();
 
         let zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
-        let mut names: Vec<_> = zip.file_names().map(str::to_string).collect();
+        let mut names: Vec<_> = zip
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
         names.sort();
         assert_eq!(
             names,

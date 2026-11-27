@@ -23,6 +23,12 @@ All notable changes to this crate are documented here. It follows
 - Releases attach prebuilt `mcpb` binaries for macOS, Linux and Windows on x64
   and arm64, so `cargo binstall mcpb` installs without compiling.
 
+### Changed
+
+- **Breaking:** `rust-version` is 1.89, because `zip` 9 needs it (it was 1.85).
+- `zip` 2 to 9, whose `ZipFile::name` returns a `Result`: names may be
+  non-UTF-8, which `Bundle::open` now reports rather than assuming.
+
 ## 0.2.1 - 2026-11-25
 
 ### Added

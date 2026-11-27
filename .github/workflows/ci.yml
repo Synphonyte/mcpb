@@ -40,14 +40,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --locked -- -D warnings
 
-  # `rust-version` is a promise, and edition 2024 makes it a low one: 1.85 is the
-  # first that has it. The lockfile is committed, so this checks the versions
-  # that were tested and not whatever a dependency released today.
+  # `rust-version` is a promise. `zip` sets its floor - 1.89 today - and the
+  # committed lockfile means this checks the versions that were tested and not
+  # whatever a dependency released today.
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.85
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
         with:
           # A cache of the current toolchain's artifacts is of no use here.
