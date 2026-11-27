@@ -196,8 +196,9 @@ bundle.extract_to("dist/unpacked")?;
 ```
 
 [`Bundle::manifest`] returns the manifest, [`Bundle::entries`] the files with their sizes and
-modes, [`Bundle::is_signed`] whether a signature follows the zip, and [`Bundle::extract_to`]
-unpacks it, refusing paths that would escape the target directory.
+modes, [`Bundle::is_signed`] whether a signature follows the zip (it checks for the marker, not the
+signature), and [`Bundle::extract_to`] unpacks it, refusing paths that would escape the target
+directory.
 
 ## Editing a manifest
 
@@ -263,10 +264,19 @@ there too.
 
 ## Not supported
 
-- **Signing.** Bundles are unsigned, as `mcpb info` and [`Bundle::is_signed`] report; sign them
-  with the official `mcpb sign` after packing. Signing would need a crypto stack, and clients only
-  trust CA-issued certificates, so a self-signed signature adds little. The signature is a PKCS#7
-  trailer after the zip, so support can be added later without changing what is packed.
+- **Signing.** Bundles are unsigned, as `mcpb info` and [`Bundle::is_signed`] report, and this
+  crate writes no signature. The official `mcpb sign` doesn't work as a stand-in yet. Release 2.1.2
+  appends the signature without declaring it in the zip's end record, so strict readers, Claude
+  Desktop's included, refuse the bundle (`Invalid comment length`), and `mcpb verify` and
+  `mcpb info` report every signed bundle as unsigned, because node-forge's PKCS#7 verifier is a
+  stub. Upstream `main` declares the trailer but bumps that field after signing, so a verifier
+  hashing the delivered bytes rejects it too. All three are open upstream
+  ([#260](https://github.com/modelcontextprotocol/mcpb/issues/260),
+  [#277](https://github.com/modelcontextprotocol/mcpb/issues/277),
+  [#278](https://github.com/modelcontextprotocol/mcpb/issues/278)), with fixes in
+  [#255](https://github.com/modelcontextprotocol/mcpb/pull/255) and
+  [#286](https://github.com/modelcontextprotocol/mcpb/pull/286). The signature is a PKCS#7 trailer
+  after the zip, so support can be added here without changing what is packed.
 - **Non-binary servers** (node, python, `uv`). The point is to ship no runtime; `from_manifest`
   refuses them.
 - **Several CPU architectures in one bundle.** The manifest can't switch per architecture, so x64
