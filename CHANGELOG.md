@@ -4,6 +4,16 @@ All notable changes to this crate are documented here. It follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A bundle packed on Windows recorded its modes as DOS attributes rather than
+  Unix ones, so its binary arrived as `rw-rw-r--` and nothing unpacked it as a
+  program on macOS or Linux. Every entry now names a Unix mode whatever host
+  packed it, so that part of the archive no longer depends on where it was
+  packed.
+
 ## 0.3.0 - 2026-11-27
 
 ### Added

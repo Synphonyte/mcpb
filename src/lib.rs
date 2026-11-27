@@ -1007,7 +1007,12 @@ impl BundleSpec {
         let plain = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             // A fixed timestamp keeps the output reproducible.
-            .last_modified_time(zip::DateTime::default());
+            .last_modified_time(zip::DateTime::default())
+            // Mode 755 or 644 is a Unix mode, and the entry has to say so:
+            // `zip` otherwise records what the host would have named it, so a
+            // bundle packed on Windows would come out with the binary as
+            // `rw-rw-r--` and nothing would extract it as a program.
+            .system(zip::System::Unix);
 
         zip.start_file("manifest.json", plain)?;
         zip.write_all(&manifest)?;
@@ -1648,6 +1653,25 @@ mod tests {
             ]
         );
         assert_eq!(zip.by_name("icon.png").unwrap().unix_mode(), Some(0o100644));
+    }
+
+    #[test]
+    fn every_entry_says_its_mode_is_a_unix_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("server-binary");
+        fs::write(&binary, b"\x7fELF fake").unwrap();
+        let bundle = dir.path().join("out.mcpb");
+
+        spec(Platform::Linux, binary).pack(&bundle).unwrap();
+
+        // The mode is read back as a Unix mode only where the entry says the
+        // host was Unix, which `zip` otherwise takes from the packing machine:
+        // a bundle packed on Windows would have no executable bit anywhere.
+        let mut zip = zip::ZipArchive::new(fs::File::open(&bundle).unwrap()).unwrap();
+        for index in 0..zip.len() {
+            let file = zip.by_index(index).unwrap();
+            assert_eq!(file.system(), zip::System::Unix, "{}", file.name().unwrap());
+        }
     }
 
     #[test]
