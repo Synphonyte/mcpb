@@ -10,6 +10,7 @@ use mcpb::{
     Bundle, BundleSpec, CertificateInfo, CertificateValidity, CryptoValidity, Error, Platform,
     SignOptions, Signature, SignatureState, SigningKey, Tree, Trust,
 };
+use zeroize::Zeroizing;
 
 const USAGE: &str = "\
 mcpb - pack, sign, validate and inspect MCP Bundles (.mcpb)
@@ -846,12 +847,16 @@ fn sign(
 }
 
 /// The passphrase of an encrypted key, never from the command line.
+///
+/// The buffer it is read into is zeroized when it goes out of scope; the copy
+/// handed back is the one the key is decrypted with, and that one is zeroized
+/// where the key is.
 fn passphrase(file: Option<&Path>) -> Result<String, Error> {
     if let Some(file) = file {
-        let text = fs::read_to_string(file).map_err(|source| Error::Read {
+        let text = Zeroizing::new(fs::read_to_string(file).map_err(|source| Error::Read {
             path: file.to_path_buf(),
             source,
-        })?;
+        })?);
         return Ok(text.trim_end_matches(['\n', '\r']).to_string());
     }
 
@@ -860,7 +865,7 @@ fn passphrase(file: Option<&Path>) -> Result<String, Error> {
     }
 
     eprintln!("mcpb: the private key is encrypted; reading its passphrase from standard input");
-    let mut line = String::new();
+    let mut line = Zeroizing::new(String::new());
     std::io::stdin()
         .read_line(&mut line)
         .map_err(|source| Error::Read {

@@ -257,6 +257,32 @@ fn an_appended_byte_makes_the_block_broken() {
 }
 
 #[test]
+fn an_append_past_a_comment_still_makes_the_block_broken() {
+    // More appended than a zip comment can reach, so the file no longer ends with
+    // an end record anything can find: the markers are what is left to go by, and
+    // they say a block was signed and then added to.
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = bundle_in(dir.path());
+    sign(&path, &signer()).unwrap();
+
+    let mut bytes = fs::read(&path).unwrap();
+    // More than the 22 bytes of an end record plus the 65535 a comment can hold,
+    // which is as far back as the record is looked for.
+    bytes.resize(bytes.len() + 70_000, b'x');
+    let broken = dir.path().join("appended.mcpb");
+    fs::write(&broken, &bytes).unwrap();
+
+    let signature = present(&broken);
+    assert_eq!(signature.layout, None);
+    assert!(
+        matches!(&signature.crypto, CryptoValidity::Malformed(error)
+            if error.to_string().contains("after its signature block")),
+        "{:?}",
+        signature.crypto
+    );
+}
+
+#[test]
 fn the_markers_of_a_signed_bundle_inside_one_are_not_a_block() {
     // A stored entry can hold a signed bundle, as a bundle shipping fixtures does.
     // Its footer is inside this bundle, and this bundle's own zip ends after it, so

@@ -264,7 +264,10 @@ A block lives in the region the zip's end record opens, so only a footer there
 can be one: the markers are ordinary bytes anywhere else. A stored entry that
 holds a signed bundle carries a footer and a header of its own, and the zip it
 is packed into ends after them, which makes that bundle unsigned rather than
-broken — and signable, since there is no block to remove first.
+broken — and signable, since there is no block to remove first. A file that
+ends with no record near enough to find has no such record to ask: the markers
+alone decide, so bytes appended to a block are still reported as a broken block
+however many there are.
 
 Signature checks, in order:
 

@@ -361,9 +361,12 @@ pub(crate) fn framing(bytes: &[u8]) -> Framing {
         // Bytes after a footer are a broken block only when that footer is outside
         // the zip. A stored entry can hold the very same markers, as a bundle
         // shipping signed fixtures does, and the zip it is packed into ends after
-        // them.
-        let outside = end_of_central_directory(bytes, bytes.len())
-            .is_some_and(|end| footer >= end.offset + END);
+        // them. A file that does not end like a zip has no record to ask, so the
+        // markers are all there is to go by.
+        let outside = match end_of_central_directory(bytes, bytes.len()) {
+            Some(end) => footer >= end.offset + END,
+            None => true,
+        };
         return match outside && last(&bytes[..footer], HEADER).is_some() {
             // A block that something was appended to is a broken block, not an
             // unsigned bundle: saying `unsigned` would hide that it was signed.
