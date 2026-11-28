@@ -1,0 +1,41 @@
+# What CI may pull in. `cargo deny check` reads this: advisories, bans,
+# licenses and sources.
+
+[graph]
+# Every target, so a dependency that is only used on one operating system is
+# still checked.
+targets = []
+all-features = true
+
+[advisories]
+version = 2
+# A yanked crate is not a vulnerability, but it should not sit in the tree.
+yanked = "warn"
+ignore = []
+
+[licenses]
+version = 2
+# Every crate here is permissively licensed. A copyleft license would need a
+# decision, so it is not on this list: a new one fails the check and gets read.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+  "Unlicense",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Two major versions of a proc-macro build dependency (`syn 2` from the DER
+# derive macros, `syn 3` elsewhere) is the standing warning here; a new duplicate
+# is worth knowing about either way.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"

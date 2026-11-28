@@ -3,15 +3,15 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
+#[cfg(feature = "signing")]
+use std::time::SystemTime;
 
 use serde_json::Value;
 
+use crate::signature;
 use crate::{BundleFile, BundleSpec, Error, MANIFEST_VERSION, RESOURCES_DIR, SERVER_DIR};
 
-/// The marker that ends a signed bundle.
-const SIGNATURE_END: &[u8] = b"MCPB_SIG_END";
-
-/// A `.mcpb` file read back: its manifest, its files, and whether it is signed.
+/// A `.mcpb` file read back: its manifest and its files.
 ///
 /// ```no_run
 /// let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
@@ -19,7 +19,7 @@ const SIGNATURE_END: &[u8] = b"MCPB_SIG_END";
 ///     "{} files, {} bytes, signed: {}",
 ///     bundle.entries().len(),
 ///     bundle.size(),
-///     bundle.is_signed(),
+///     bundle.has_signature_block(),
 /// );
 /// # Ok::<(), mcpb::Error>(())
 /// ```
@@ -29,7 +29,6 @@ pub struct Bundle {
     size: u64,
     manifest: Value,
     entries: Vec<Entry>,
-    signed: bool,
 }
 
 /// A file of a [`Bundle`].
@@ -53,7 +52,6 @@ impl Bundle {
             .metadata()
             .map_err(|error| Error::read(&path, error))?
             .len();
-        let signed = self::signed(&path)?;
 
         let mut archive = zip::ZipArchive::new(file).map_err(|error| Error::Bundle {
             path: path.clone(),
@@ -90,7 +88,6 @@ impl Bundle {
             size,
             manifest,
             entries,
-            signed,
         })
     }
 
@@ -125,9 +122,31 @@ impl Bundle {
         self.size
     }
 
-    /// Whether a signature follows the zip; it is not checked.
-    pub fn is_signed(&self) -> bool {
-        self.signed
+    /// Whether a signature block follows the zip, whatever it says.
+    ///
+    /// A block whose markers are there but whose framing, layout or signature is
+    /// broken is still a block: only a bundle with neither marker is unsigned.
+    /// This reads the end of the file only, and a file it cannot read has no block
+    /// it can name; [`Self::signature`] is where that error surfaces.
+    pub fn has_signature_block(&self) -> bool {
+        signature::has_block(&self.path).unwrap_or(false)
+    }
+
+    /// What the bundle's signature says, checked at the current time.
+    #[cfg(feature = "signing")]
+    pub fn signature(&self) -> Result<signature::SignatureState, Error> {
+        self.signature_at(SystemTime::now())
+    }
+
+    /// What the bundle's signature says, checked at `at`.
+    ///
+    /// The only error is a file that cannot be read: a broken or foreign block is
+    /// reported in the state, so a caller can say what is wrong with it. A bundle
+    /// whose zip no longer reads is refused by [`Self::open`], so a caller that
+    /// has to verify a damaged file reads it with [`signature::signature_at`].
+    #[cfg(feature = "signing")]
+    pub fn signature_at(&self, at: SystemTime) -> Result<signature::SignatureState, Error> {
+        signature::signature_at(&self.path, at)
     }
 
     /// Whether the manifest version is the one this crate writes.
@@ -244,27 +263,6 @@ impl std::fmt::Display for Bundle {
     }
 }
 
-/// Whether the file ends with the marker of a signed bundle.
-fn signed(path: &Path) -> Result<bool, Error> {
-    use std::io::{Seek, SeekFrom};
-
-    let mut file = fs::File::open(path).map_err(|error| Error::read(path, error))?;
-    let size = file
-        .metadata()
-        .map_err(|error| Error::read(path, error))?
-        .len();
-    if size < SIGNATURE_END.len() as u64 {
-        return Ok(false);
-    }
-
-    file.seek(SeekFrom::End(-(SIGNATURE_END.len() as i64)))
-        .map_err(|error| Error::read(path, error))?;
-    let mut end = [0; SIGNATURE_END.len()];
-    file.read_exact(&mut end)
-        .map_err(|error| Error::read(path, error))?;
-    Ok(end == *SIGNATURE_END)
-}
-
 fn read_manifest<R: io::Read + io::Seek>(
     archive: &mut zip::ZipArchive<R>,
     path: &Path,
@@ -350,7 +348,7 @@ mod tests {
         assert!(bundle.is_current());
         assert_eq!(bundle.entry_point(), Some("server/test-server"));
         assert_eq!(bundle.size(), fs::metadata(&path).unwrap().len());
-        assert!(!bundle.is_signed());
+        assert!(!bundle.has_signature_block());
 
         let entries = bundle.entries();
         assert_eq!(
@@ -500,18 +498,34 @@ mod tests {
     fn a_signature_after_the_zip_is_reported() {
         let (dir, path) = packed();
         let mut bytes = fs::read(&path).unwrap();
-        bytes.extend_from_slice(b"MCPB_SIG_V1");
+        bytes.extend_from_slice(signature::HEADER);
         bytes.extend_from_slice(&3u32.to_le_bytes());
         bytes.extend_from_slice(b"DER");
-        bytes.extend_from_slice(SIGNATURE_END);
+        bytes.extend_from_slice(signature::FOOTER);
 
         let signed_path = dir.path().join("signed.mcpb");
         fs::write(&signed_path, &bytes).unwrap();
 
         let bundle = Bundle::open(&signed_path).unwrap();
-        assert!(bundle.is_signed());
+        assert!(bundle.has_signature_block());
         // The zip the signature is appended to still reads.
         assert_eq!(bundle.manifest()["name"], "test-server");
+    }
+
+    /// A zip whose comment ends with the footer marker is not a signed bundle: a
+    /// block needs a header before its footer.
+    #[test]
+    fn a_marker_in_the_comment_is_no_signature() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("comment.mcpb");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(br#"{"manifest_version": "0.3"}"#).unwrap();
+        zip.set_comment("a note ending in MCPB_SIG_END").unwrap();
+        zip.finish().unwrap();
+
+        assert!(!Bundle::open(&path).unwrap().has_signature_block());
     }
 
     #[test]

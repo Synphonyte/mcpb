@@ -4,9 +4,39 @@
 mod bundle;
 mod ignore;
 mod manifest;
+mod signature;
 mod validate;
 
+#[cfg(feature = "signing")]
+mod cms;
+#[cfg(feature = "signing")]
+mod signing;
+#[cfg(feature = "signing")]
+mod trust;
+
 pub use bundle::{Bundle, Entry};
+pub use signature::{
+    CertificateInfo, CertificateValidity, CryptoValidity, ForeignLayout, Layout, Signature,
+    SignatureError, SignatureState, Trust, TrustError, TrustProblem, Unsupported, unsign,
+};
+#[cfg(feature = "signing")]
+pub use signature::{signature, signature_at};
+
+#[cfg(feature = "signing")]
+pub use signing::{
+    MAX_SLOT, MIN_SLOT, SignOptions, SigningKey, apply_signature, prepare_for_signing, sign,
+    sign_with,
+};
+
+/// Whether the certificate that signed `signature` is trusted.
+///
+/// `ca_file` is the anchors to build a chain from (`--ca-file`), which works on
+/// every platform and is what makes a private certificate authority usable.
+/// Without one, macOS and Windows ask their own chain builder and every other
+/// platform answers [`Trust::NotEvaluated`], because Linux has no code-signing
+/// policy store.
+#[cfg(feature = "signing")]
+pub use trust::evaluate as check_trust;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -60,6 +90,8 @@ pub enum Error {
     Unsafe(String),
     /// A manifest field is missing, has the wrong type, or is not supported.
     Manifest(String),
+    /// A signature could not be written, applied or removed as asked.
+    Signing(String),
 }
 
 impl Error {
@@ -114,6 +146,7 @@ impl std::fmt::Display for Error {
                 write!(f, "{name} would be written outside the bundle's directory")
             }
             Self::Manifest(reason) => write!(f, "the manifest cannot be read: {reason}"),
+            Self::Signing(reason) => f.write_str(reason),
         }
     }
 }
@@ -127,6 +160,7 @@ impl std::error::Error for Error {
             | Self::Clash { .. }
             | Self::Bundle { .. }
             | Self::Unsafe(_)
+            | Self::Signing(_)
             | Self::Manifest(_) => None,
             Self::Version(source) => Some(source),
             Self::Read { source, .. } | Self::Write { source } => Some(source),

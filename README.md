@@ -80,6 +80,9 @@ API docs on [docs.rs](https://docs.rs/mcpb). The API is not stable before 1.0.
 ```sh
 mcpb pack path/to/manifest.json --arch arm64 -o my-server.mcpb
 mcpb pack manifest.json --platform linux --arch x64 --executable target/release/my-server -o dist/
+mcpb sign my-server.mcpb --cert cert.pem --key key.pem
+mcpb verify my-server.mcpb
+mcpb unsign my-server.mcpb
 mcpb validate my-server.mcpb
 mcpb info my-server.mcpb
 ```
@@ -91,6 +94,8 @@ mcpb info my-server.mcpb
   takes the binary `cargo` built, relative to where you run `mcpb` as `-o` is, rather than the
   entry point's path. `--tree dir` packs a directory into `server/` as executables, honouring
   `.mcpbignore`; `--data dir` packs it as plain files.
+- `sign`, `verify`, `unsign`, `prepare-for-signing` and `apply-signature` are described under
+  [Signing](#signing).
 - `validate` checks a manifest, or a bundle and that it holds the files its manifest names.
 - `info` prints what a bundle holds, with `*` marking executables:
 
@@ -108,6 +113,102 @@ calculator-rust 1.0.0
 ```
 
 The same information is available to Rust code through [`Bundle`].
+
+## Signing
+
+A signature is a block appended after the zip:
+
+```text
+[zip ... end of central directory]
+MCPB_SIG_V1 | 4-byte little-endian length | DER CMS signature | MCPB_SIG_END
+```
+
+The end of central directory record declares the block in its comment length, so the file stays a
+valid zip, and the signature covers exactly the bytes a client reads. That is the one rule both of
+upstream's release lines break, which is why this crate does not accept their signatures; see
+[`docs/signing.md`](docs/signing.md) for the format and the reasoning.
+
+```sh
+mcpb sign my-server.mcpb --cert cert.pem --key key.pem [--chain ca.pem]... [--force]
+mcpb verify my-server.mcpb [--no-trust | --ca-file ca.pem] [--allow-self-signed] [--allow-expired]
+mcpb unsign my-server.mcpb
+mcpb prepare-for-signing my-server.mcpb --slot 16384
+mcpb apply-signature my-server.mcpb --signature sig.der
+```
+
+- `sign` appends a signature with RSA PKCS\#1 v1.5 and SHA-256. It refuses a key that is not the
+  certificate's, a key under 2048 bits, a certificate without the `codeSigning` extended key usage,
+  one that is not valid at the signing time, an already signed bundle (unless `--force`), and a zip
+  whose comment cannot hold the signature. A failure leaves the file as it was. The key may be
+  PKCS\#8, encrypted PKCS\#8 or PKCS\#1; a passphrase comes from `--passphrase-file`,
+  `MCPB_PASSPHRASE` or standard input, never from the command line.
+- `verify` checks the signature over the bytes delivered and, unless `--no-trust`, whether the
+  certificate chain reaches a trusted anchor. It exits 0 only for a bundle it can accept:
+  `unsigned`, a signature it cannot read, an invalid signature, a foreign layout, an expired
+  certificate and an untrusted chain all exit 1. `--allow-expired` and `--allow-self-signed` each
+  relax one of those.
+- Trust is asked of the operating system on macOS (`security verify-cert -p codeSign`) and Windows
+  (`X509Chain`, `code-signing` application policy). Linux has no code-signing policy store, so
+  plain `mcpb verify` there reports that the publisher was not established and exits 0 for a
+  certificate authority's signature, and 1 for a self-signed one. `--ca-file ca.pem` builds the
+  chain in pure Rust against the anchors given, on every platform, which is also what a private
+  certificate authority needs and what keeps CI deterministic. `--no-trust` checks the signature
+  alone.
+- `prepare-for-signing` reserves a zero-filled slot after the zip and prints how many bytes the
+  signature has to cover, so an HSM or external signer can sign bytes that never change afterwards;
+  `apply-signature` fills the slot with the detached DER CMS signature it produced, and refuses one
+  that does not verify over those bytes.
+- `unsign` removes a block this crate wrote and restores the bytes that were signed, byte for byte,
+  including a zip comment.
+
+Certificates expire, and the format has no trusted timestamp, so a bundle stops verifying when its
+certificate does. `signingTime` is recorded and shown, but it is the signer's claim and never extends
+how long a bundle verifies.
+
+```rust,no_run
+use std::collections::BTreeMap;
+
+use mcpb::{Author, Bundle, BundleSpec, Executable, Platform, SignatureState, SigningKey};
+
+fn main() -> Result<(), mcpb::Error> {
+    // Packing and signing in one step, or `mcpb::sign(&path, &key)` afterwards.
+    let key = SigningKey::load("cert.pem".as_ref(), "key.pem".as_ref(), &[], || {
+        Err(mcpb::Error::Signing("no passphrase needed".into()))
+    })?;
+    let spec = BundleSpec {
+        name: "my-server".into(),
+        version: "1.2.3".parse()?,
+        description: "What the server does.".into(),
+        author: Author::new("Me"),
+        executables: BTreeMap::from([(
+            Platform::Darwin,
+            Executable::new("target/release/my-server", "arm64"),
+        )]),
+        ..BundleSpec::default()
+    };
+    spec.pack_signed("dist/my-server.mcpb".as_ref(), &key)?;
+
+    // What a bundle says about its signature is a report, not a yes or no.
+    let bundle = Bundle::open("dist/my-server.mcpb")?;
+    match bundle.signature()? {
+        SignatureState::None => println!("unsigned"),
+        SignatureState::Foreign(layout) => println!("a layout this crate does not verify: {layout}"),
+        SignatureState::Present(signature) => {
+            println!("{:?}, certificate {}", signature.crypto, signature.validity);
+            // Whether that signer is trusted is a separate question, and its
+            // answer is the caller's to act on.
+            let trust = mcpb::check_trust(&signature, std::time::SystemTime::now(), Some("ca.pem".as_ref()));
+            println!("{trust}");
+        }
+    }
+    Ok(())
+}
+```
+
+`Bundle::signature` verifies the signature and the certificate's own properties; `mcpb::check_trust`
+adds the chain, against the anchors given or the platform's own builders when `None` is passed.
+`mcpb::signature` and `mcpb::signature_at` ask the same question about a file without reading it as
+a bundle, so a tampered bundle is still reported as signed and invalid.
 
 ## GitHub Action
 
@@ -178,8 +279,8 @@ bundle is never packed into itself.
 
 Errors are an [`mcpb::Error`](Error), one variant per kind of failure: `Invalid` (what `validate`
 reports), `Version`, `Read`, `Write`, `Name` (no UTF-8 file name), `Icon` (not a PNG), `Clash` (two
-files, one name), and `Bundle`, `Unsafe` and `Manifest` for bundles and manifests that cannot be
-read.
+files, one name), `Signing` (a signature that could not be written, applied or removed), and
+`Bundle`, `Unsafe` and `Manifest` for bundles and manifests that cannot be read.
 
 ## Reading a bundle
 
@@ -188,7 +289,7 @@ read.
 ```rust,no_run
 let bundle = mcpb::Bundle::open("dist/my-server-1.2.3-darwin-arm64.mcpb")?;
 let manifest = bundle.manifest();
-println!("{} {}, signed: {}", manifest["name"], manifest["version"], bundle.is_signed());
+println!("{} {}, signed: {}", manifest["name"], manifest["version"], bundle.has_signature_block());
 for entry in bundle.entries() {
     println!("{:>9}  {}{}", entry.size, entry.name, if entry.executable { " *" } else { "" });
 }
@@ -197,9 +298,9 @@ bundle.extract_to("dist/unpacked")?;
 ```
 
 [`Bundle::manifest`] returns the manifest, [`Bundle::entries`] the files with their sizes and
-modes, [`Bundle::is_signed`] whether a signature follows the zip (it checks for the marker, not the
-signature), and [`Bundle::extract_to`] unpacks it, refusing paths that would escape the target
-directory.
+modes, [`Bundle::has_signature_block`] whether a signature block follows the zip (framing only: it
+says nothing about whether the signature is valid), and [`Bundle::extract_to`] unpacks it, refusing
+paths that would escape the target directory. [`Bundle::signature`] is what the block actually says.
 
 ## Editing a manifest
 
@@ -259,31 +360,42 @@ manifest and `.mcpbignore` (vendored in `tests/fixtures/`).
 
 CI checks pull requests - the badge above is the latest one - on Linux, macOS and Windows, x64 and
 arm64, and on Rust 1.89, with the committed `Cargo.lock`. On each runner it also packs real bundles
-with the library and the CLI, and has the official `mcpb` CLI unpack and validate them. A tag runs
-the whole of CI again before the release workflow publishes, so a push straight to `main` is
-checked there too.
+with the library and the CLI, and has the official `mcpb` CLI unpack and validate them.
+`cargo deny` checks advisories, licenses, bans and sources. A tag runs the whole of CI again
+before the release workflow publishes, so a push straight to `main` is checked there too.
 
 ## Not supported
 
-- **Signing.** Bundles are unsigned, as `mcpb info` and [`Bundle::is_signed`] report, and this
-  crate writes no signature. The official `mcpb sign` doesn't work as a stand-in yet. Release 2.1.2
-  appends the signature without declaring it in the zip's end record, so strict readers, Claude
-  Desktop's included, refuse the bundle (`Invalid comment length`), and `mcpb verify` and
-  `mcpb info` report every signed bundle as unsigned, because node-forge's PKCS#7 verifier is a
-  stub. Upstream `main` declares the trailer but bumps that field after signing, so a verifier
-  hashing the delivered bytes rejects it too. All three are open upstream
+- **Signatures by the official CLI.** Bundles signed by `mcpb` 2.1.2 or current upstream `main` are
+  refused, and `mcpb verify` says so by name. Release 2.1.2 appends the signature without declaring
+  it in the zip's end record, so a strict reader sees bytes after the comment; upstream `main`
+  declares the trailer but bumps that field after signing, so a verifier hashing the delivered bytes
+  rejects it. Both are open upstream
   ([#260](https://github.com/modelcontextprotocol/mcpb/issues/260),
   [#277](https://github.com/modelcontextprotocol/mcpb/issues/277),
   [#278](https://github.com/modelcontextprotocol/mcpb/issues/278)), with fixes in
   [#255](https://github.com/modelcontextprotocol/mcpb/pull/255) and
-  [#286](https://github.com/modelcontextprotocol/mcpb/pull/286). The signature is a PKCS#7 trailer
-  after the zip, so support can be added here without changing what is packed.
+  [#286](https://github.com/modelcontextprotocol/mcpb/pull/286).
+- **Trusted timestamps, revocation lists and certificate generation.** A bundle verifies while its
+  certificate is valid, and not after; `signingTime` is the signer's claim and extends nothing.
+  Users bring their own certificate and key, and `--ca-file` checks revocation nowhere.
+- **ECDSA, RSA-PSS and several signers.** The format's signature is RSA PKCS\#1 v1.5 with SHA-256,
+  one signer. A `--ca-file` chain whose links use other algorithms is reported as untrusted with
+  that reason; the platform tools keep their own behaviour.
 - **Non-binary servers** (node, python, `uv`). The point is to ship no runtime; `from_manifest`
   refuses them.
 - **Several CPU architectures in one bundle.** The manifest can't switch per architecture, so x64
   and arm64 need separate bundles, unless the binary is a universal macOS binary.
 - **Manifest version 0.4.** It only adds the `uv` server type.
 - **A custom localization path.** Translations always go to `mcpb-resources/${locale}.json`.
+
+## Known limitation
+
+Claude Desktop's own verification path never finishes on a bundle signature (upstream issue
+[#305](https://github.com/modelcontextprotocol/mcpb/issues/305)), so a correctly signed bundle can
+still be treated as unsigned by that client until it is fixed. The bundle itself is a valid zip, its
+signature verifies with OpenSSL and with Windows' own tooling, and it installs where the client's
+signature policy is off.
 
 ## Releasing
 

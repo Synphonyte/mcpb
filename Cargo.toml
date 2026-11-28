@@ -10,6 +10,13 @@ repository = "https://github.com/Synphonyte/mcpb"
 rust-version = "1.89"
 version = "0.4.0"
 
+# The binary signs, verifies and prepares bundles, so it needs both features. A
+# library user that turns them off packs without them; `cargo build` builds this.
+[[bin]]
+name = "mcpb"
+path = "src/main.rs"
+required-features = ["signing", "trust"]
+
 # `cargo binstall mcpb` downloads the binary the release workflow attaches to
 # the GitHub release instead of compiling the crate.
 [package.metadata.binstall]
@@ -30,6 +37,37 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # `deflate` would also pull zopfli, which only applies above level 9 -
 # and this crate writes every entry at flate2's default level.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# `signing` and `trust`: signing bundles and checking their signatures, in pure
+# Rust. `cms` is a release candidate, so both it and `rsa` are pinned exactly;
+# see docs/signing.md.
+cms = { version = "=0.3.0-rc.2", optional = true, default-features = false, features = ["std", "builder"] }
+const-oid = { version = "0.10", optional = true, features = ["db"] }
+pkcs8 = { version = "0.11", optional = true, features = ["encryption", "pem"] }
+rsa = { version = "=0.10.0", optional = true, features = ["pkcs1v15", "pkcs5"] }
+rustls-pki-types = { version = "=1.16.0", optional = true }
+rustls-webpki = { version = "=0.103.17", optional = true, default-features = false, features = ["std"] }
+sha2 = { version = "0.11", optional = true }
+x509-cert = { version = "0.3", optional = true, default-features = false, features = ["pem", "std"] }
+zeroize = { version = "1", optional = true }
+
+[features]
+# Signing and trusting are on by default so the `mcpb` binary signs and verifies.
+# A library user that only packs can turn both off and get today's dependency
+# set back: `default-features = false`.
+default = ["signing", "trust"]
+signing = [
+    "dep:cms",
+    "dep:const-oid",
+    "dep:pkcs8",
+    "dep:rsa",
+    "dep:sha2",
+    "dep:x509-cert",
+    "dep:zeroize",
+]
+# `--ca-file` builds a chain from the anchors it is given, so it needs the same
+# RSA verifier the signature does; a trust-only build would not be useful.
+trust = ["signing", "dep:rustls-pki-types", "dep:rustls-webpki"]
 
 [dev-dependencies]
 jsonschema = "0.63"

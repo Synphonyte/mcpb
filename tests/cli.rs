@@ -24,6 +24,45 @@ fn mcpb(args: &[&str]) -> Output {
         .expect("the binary runs")
 }
 
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/signing")
+        .join(name)
+}
+
+/// A packed bundle, and the directory it lives in.
+fn packed(dir: &Path) -> PathBuf {
+    let example = example(&dir.join("example"));
+    let bundle = dir.join("out.mcpb");
+    let output = mcpb(&[
+        "pack",
+        example.to_str().expect("UTF-8"),
+        "-o",
+        bundle.to_str().expect("UTF-8"),
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+    bundle
+}
+
+/// Signs `bundle` with the test identity named `certificate` and `key`.
+fn sign(bundle: &Path, certificate: &str, key: &str) -> Output {
+    mcpb(&[
+        "sign",
+        bundle.to_str().expect("UTF-8"),
+        "--cert",
+        fixture(certificate).to_str().expect("UTF-8"),
+        "--key",
+        fixture(key).to_str().expect("UTF-8"),
+    ])
+}
+
+/// Runs `verify` on `bundle` with `flags` after it.
+fn verify(bundle: &Path, flags: &[&str]) -> Output {
+    let mut args = vec!["verify", bundle.to_str().expect("UTF-8")];
+    args.extend_from_slice(flags);
+    mcpb(&args)
+}
+
 fn text(output: &Output) -> String {
     format!(
         "{}{}",
@@ -277,5 +316,300 @@ fn a_platform_or_executable_it_cannot_use_says_so() {
         text(&output).contains("--executable needs --platform"),
         "{}",
         text(&output)
+    );
+}
+
+#[test]
+fn it_signs_verifies_and_unsigns_a_bundle() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+    let unsigned = fs::read(&bundle).expect("the bundle");
+
+    let output = mcpb(&["verify", bundle.to_str().expect("UTF-8")]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(text(&output).contains("unsigned"), "{}", text(&output));
+
+    let output = sign(&bundle, "leaf.pem", "leaf.key");
+    assert!(output.status.success(), "{}", text(&output));
+
+    let output = verify(
+        &bundle,
+        &["--ca-file", fixture("ca.pem").to_str().expect("UTF-8")],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let report = text(&output);
+    for expected in [
+        "signed by CN=mcpb test signer",
+        "publisher: CN=mcpb test signer",
+        "issuer: CN=mcpb test CA",
+        "trust: trusted",
+        "sha256: ",
+    ] {
+        assert!(report.contains(expected), "{expected} is not in:\n{report}");
+    }
+
+    // `info` says the same without deciding anything.
+    let output = mcpb(&["info", bundle.to_str().expect("UTF-8")]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("signature valid"),
+        "{}",
+        text(&output)
+    );
+
+    let output = mcpb(&["unsign", bundle.to_str().expect("UTF-8")]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(fs::read(&bundle).expect("the bundle"), unsigned);
+}
+
+#[test]
+fn a_signature_it_cannot_trust_is_not_accepted() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+    assert!(sign(&bundle, "leaf.pem", "leaf.key").status.success());
+
+    // A certificate authority that did not sign the bundle.
+    let output = verify(
+        &bundle,
+        &["--ca-file", fixture("ec-ca.pem").to_str().expect("UTF-8")],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(text(&output).contains("untrusted"), "{}", text(&output));
+
+    // Without a chain check the signature alone is enough.
+    let output = verify(&bundle, &["--no-trust"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("trust: not evaluated"),
+        "{}",
+        text(&output)
+    );
+
+    // A certificate is only valid while it is valid.
+    let output = verify(&bundle, &["--no-trust", "--at", "1999-06-01T00:00:00Z"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(text(&output).contains("not yet valid"), "{}", text(&output));
+
+    let output = verify(
+        &bundle,
+        &[
+            "--no-trust",
+            "--at",
+            "1999-06-01T00:00:00Z",
+            "--allow-expired",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+
+    // And the two ways of asking about trust cannot be asked together.
+    let output = verify(
+        &bundle,
+        &[
+            "--no-trust",
+            "--ca-file",
+            fixture("ca.pem").to_str().expect("UTF-8"),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output));
+    assert!(
+        text(&output).contains("opposite things"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn a_self_signed_bundle_needs_to_be_allowed() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+    let output = sign(&bundle, "self-signed.pem", "self-signed.key");
+    assert!(output.status.success(), "{}", text(&output));
+
+    let output = verify(&bundle, &[]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+
+    let output = verify(&bundle, &["--allow-self-signed"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(text(&output).contains("self-signed"), "{}", text(&output));
+
+    let output = verify(&bundle, &["--no-trust"]);
+    assert!(output.status.success(), "{}", text(&output));
+}
+
+#[test]
+fn signing_refuses_what_it_cannot_sign_with() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+    let unsigned = fs::read(&bundle).expect("the bundle");
+
+    for (certificate, key, expected) in [
+        ("no-eku.pem", "no-eku.key", "codeSigning"),
+        ("weak.pem", "weak.key", "at least 2048"),
+        ("expired.pem", "expired.key", "expired"),
+        ("leaf.pem", "other.key", "not the certificate's"),
+    ] {
+        let output = sign(&bundle, certificate, key);
+        assert_eq!(output.status.code(), Some(1), "{certificate}");
+        assert!(
+            text(&output).contains(expected),
+            "{certificate} said:\n{}",
+            text(&output)
+        );
+        assert_eq!(fs::read(&bundle).expect("the bundle"), unsigned);
+    }
+
+    // Signing twice is refused, and --force replaces.
+    assert!(sign(&bundle, "leaf.pem", "leaf.key").status.success());
+    let output = sign(&bundle, "leaf.pem", "leaf.key");
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(text(&output).contains("--force"), "{}", text(&output));
+
+    let output = mcpb(&[
+        "sign",
+        bundle.to_str().expect("UTF-8"),
+        "--cert",
+        fixture("leaf.pem").to_str().expect("UTF-8"),
+        "--key",
+        fixture("leaf.key").to_str().expect("UTF-8"),
+        "--chain",
+        fixture("intermediate.pem").to_str().expect("UTF-8"),
+        "--force",
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+}
+
+#[test]
+fn an_upstream_layout_is_reported_as_unsupported() {
+    for name in ["upstream-212.mcpb", "upstream-main.mcpb"] {
+        let output = verify(&fixture(name), &["--no-trust"]);
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        assert!(
+            text(&output).contains("unsupported signature"),
+            "{name}: {}",
+            text(&output)
+        );
+        assert!(
+            !text(&output).contains("unsigned"),
+            "{name}: {}",
+            text(&output)
+        );
+    }
+}
+
+#[test]
+fn an_external_signer_fills_a_reserved_slot() {
+    // The pipeline is only complete with a signature from outside, and `openssl`
+    // is the external signer every machine with a shell has.
+    let available = Command::new("openssl")
+        .arg("version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+
+    let output = mcpb(&["prepare-for-signing", bundle.to_str().expect("UTF-8")]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("16384-byte slot"),
+        "{}",
+        text(&output)
+    );
+
+    // Preparing twice would move the bytes an external signer already signed.
+    let output = mcpb(&["prepare-for-signing", bundle.to_str().expect("UTF-8")]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+
+    if !available {
+        eprintln!("skipped the signature itself: openssl is not installed");
+        return;
+    }
+
+    // What an external signer signs is the prepared file without its slot: the
+    // bytes the signature covers, and the bytes that ship.
+    let prepared = fs::read(&bundle).expect("the prepared bundle");
+    let content = dir.path().join("content");
+    fs::write(&content, &prepared[..prepared.len() - 16384]).expect("the content");
+
+    let signature = dir.path().join("sig.der");
+    let output = Command::new("openssl")
+        .args([
+            "cms", "-sign", "-binary", "-md", "sha256", "-outform", "DER",
+        ])
+        .arg("-signer")
+        .arg(fixture("leaf.pem"))
+        .arg("-inkey")
+        .arg(fixture("leaf.key"))
+        .arg("-in")
+        .arg(&content)
+        .arg("-out")
+        .arg(&signature)
+        .output()
+        .expect("openssl runs");
+    assert!(output.status.success(), "{}", text(&output));
+
+    let output = mcpb(&[
+        "apply-signature",
+        bundle.to_str().expect("UTF-8"),
+        "--signature",
+        signature.to_str().expect("UTF-8"),
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+
+    let output = verify(
+        &bundle,
+        &["--ca-file", fixture("ca.pem").to_str().expect("UTF-8")],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+}
+
+#[test]
+fn openssl_accepts_the_signature_it_writes() {
+    // Another implementation has to read what this one writes, or the format is
+    // only self-consistent.
+    let available = Command::new("openssl")
+        .arg("version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !available {
+        eprintln!("skipped: openssl is not installed");
+        return;
+    }
+
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+    assert!(sign(&bundle, "leaf.pem", "leaf.key").status.success());
+
+    let signed = fs::read(&bundle).expect("the bundle");
+    let header = signed
+        .windows(11)
+        .rposition(|window| window == b"MCPB_SIG_V1")
+        .expect("the block");
+    let length = u32::from_le_bytes(
+        signed[header + 11..header + 15]
+            .try_into()
+            .expect("four bytes"),
+    ) as usize;
+
+    let signer = dir.path().join("sig.der");
+    let content = dir.path().join("content");
+    let sink = dir.path().join("verified");
+    fs::write(&signer, &signed[header + 15..header + 15 + length]).expect("the signature");
+    fs::write(&content, &signed[..header]).expect("the signed bytes");
+
+    let output = Command::new("openssl")
+        .args(["cms", "-verify", "-binary", "-inform", "DER", "-noverify"])
+        .arg("-in")
+        .arg(&signer)
+        .arg("-content")
+        .arg(&content)
+        .arg("-out")
+        .arg(&sink)
+        .output()
+        .expect("openssl runs");
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(
+        fs::read(&sink).expect("the verified content"),
+        signed[..header].to_vec()
     );
 }

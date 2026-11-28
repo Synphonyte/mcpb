@@ -4,6 +4,36 @@ All notable changes to this crate are documented here. It follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Signing, verification and unsigning.** `mcpb sign`, `mcpb verify`, `mcpb unsign`,
+  `mcpb prepare-for-signing` and `mcpb apply-signature`, and the same in the library as
+  [`SigningKey`], [`sign`], [`sign_with`], [`unsign`], [`prepare_for_signing`],
+  [`apply_signature`] and [`BundleSpec::pack_signed`]. The signature is a PKCS#7/CMS
+  block appended after the zip with the end of central directory record's comment length
+  patched first, so the file stays a valid zip and the signature covers exactly the bytes
+  a client reads. RSA PKCS#1 v1.5 with SHA-256, in pure Rust: no OpenSSL crate, no
+  subprocess. `docs/signing.md` is the reference.
+- [`Bundle::signature`] and [`mcpb::signature`] report a bundle's signature as separate
+  facts - layout, crypto validity, certificate validity and trust - instead of yes or no,
+  and [`mcpb::check_trust`] adds the certificate chain: `--ca-file` against the anchors
+  given, or the platform's own chain builder on macOS and Windows.
+- `mcpb verify` exits 0 only for a signature it can trust; `--no-trust` checks the
+  signature alone, `--allow-expired` and `--allow-self-signed` each relax one condition.
+
+### Changed
+
+- **Breaking:** `Bundle::is_signed` is now `Bundle::has_signature_block`, and it reports
+  whether a signature block is actually framed - a footer marker, a header before it, and
+  a length and padding that fit - rather than whether the file ends with the footer's
+  bytes. A zip comment that happens to end in `MCPB_SIG_END` is no longer reported as
+  signed.
+- The `mcpb` binary requires the `signing` and `trust` features. Both are on by default; a
+  library user that turns them off packs with the dependency set it had before, and builds
+  no binary.
+
 ## 0.4.0 - 2026-11-27
 
 ### Changed

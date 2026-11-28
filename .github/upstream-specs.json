@@ -6,7 +6,9 @@
       "paths": [
         "schemas",
         "MANIFEST.md",
-        "src/schemas"
+        "CLI.md",
+        "src/schemas",
+        "src/node/sign.ts"
       ],
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
       "pinned": {

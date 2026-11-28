@@ -63,6 +63,18 @@ jobs:
           key: msrv
       - run: cargo test --locked
 
+  # The dependencies are a promise like the MSRV is: an advisory against one of
+  # them, or a license this crate cannot use, should fail a pull request rather
+  # than be noticed on release day.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny --locked check
+
   # The README is the crate documentation, so this also checks that its example
   # still describes this crate's API.
   doc:
