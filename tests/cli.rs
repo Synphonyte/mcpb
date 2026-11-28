@@ -682,3 +682,34 @@ fn openssl_accepts_the_signature_it_writes() {
         signed[..header].to_vec()
     );
 }
+
+/// macOS and Windows ask their own chain builder when no `--ca-file` is given.
+/// The test CA is in no system store, so the honest answer there is `untrusted`;
+/// a trust *error* would mean the tool could not be run or did not understand
+/// what it was asked, which is what this test is here to catch: the `security -d`
+/// date, the PowerShell script's arguments and its "not trusted" exit code.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn the_platform_chain_builder_answers_untrusted_for_a_private_ca() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+    let output = sign(&bundle, "leaf.pem", "leaf.key");
+    assert!(output.status.success(), "{}", text(&output));
+
+    let cases: [&[&str]; 3] = [
+        &[],
+        // A time inside the signer's validity window, which the tools are
+        // handed rather than reading the clock.
+        &["--at", "2030-06-01T12:34:56Z"],
+        // An expired signer, which `--allow-expired` moves back into its
+        // window before asking the platform.
+        &["--at", "2101-01-01T00:00:00Z", "--allow-expired"],
+    ];
+    for flags in cases {
+        let output = verify(&bundle, flags);
+        let said = text(&output);
+        assert_eq!(output.status.code(), Some(1), "{flags:?}: {said}");
+        assert!(said.contains("trust: untrusted"), "{flags:?}: {said}");
+        assert!(!said.contains("could not be checked"), "{flags:?}: {said}");
+    }
+}
