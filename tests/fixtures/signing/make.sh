@@ -48,6 +48,16 @@ basicConstraints=critical,CA:TRUE
 keyUsage=critical,keyCertSign,cRLSign
 EOF
 
+# A signer whose certificate names its key with an identifier of its own, which a
+# CMS may use instead of issuer and serial number. Nothing else here declares one,
+# and a signer that does is the case where the two names differ.
+cat > "$work/ski.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=codeSigning
+subjectKeyIdentifier=hash
+EOF
+
 # A code-signing CA, and an intermediate it signed.
 sign ca "/CN=mcpb test CA" "$work/ca.ext" self "" "$from" "$to"
 sign intermediate "/CN=mcpb test intermediate" "$work/ca.ext" ca.pem ca.key "$from" "$to"
@@ -57,6 +67,7 @@ sign chained "/CN=mcpb test chained signer" "$work/signer.ext" intermediate.pem 
 sign expired "/CN=mcpb test expired signer" "$work/signer.ext" ca.pem ca.key "$from" "$expired_to"
 sign self-signed "/CN=mcpb test self-signed" "$work/signer.ext" self "" "$from" "$to"
 sign no-eku "/CN=mcpb test no eku" "$work/plain.ext" ca.pem ca.key "$from" "$to"
+sign ski "/CN=mcpb test signer with a key id" "$work/ski.ext" self "" "$from" "$to"
 
 # An RSA key below the 2048-bit floor.
 weak() {

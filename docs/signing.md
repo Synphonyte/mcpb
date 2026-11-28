@@ -242,10 +242,11 @@ of a signature.
 | Condition | Result |
 | --- | --- |
 | no `MCPB_SIG_END` at EOF, or no `MCPB_SIG_V1` before it | `None` |
-| the footer is inside the file but not at its end, with a header before it | `Present(Malformed)` (bytes were appended after signing) |
+| a footer after the EOCD but not at the end of the file, with a header before it | `Present(Malformed)` (bytes were appended after signing) |
+| a footer before the EOCD, or no footer at EOF | `None` (the markers are zip data, not a block) |
 | both markers present, but the length overruns the bytes before the footer, DER does not parse, non-zero bytes between DER end and footer, or no EOCD with `e+22 <= h` | `Present(Malformed)` |
 | `e+22+c > n` (comment overruns the file) | `Present(Malformed)` |
-| `e+22+c == n`, CMS parses but has more than one signer or an algorithm outside RSA-SHA256 | `Present(Unsupported)` |
+| `e+22+c == n`, CMS parses but has more than one signer, an algorithm outside RSA-SHA256, or a signer key under 2048 bits | `Present(Unsupported)` |
 | `e+22+c == n` and the stored content digest matches | `Present(Valid)` or `Present(Invalid)` from the signature check |
 | `e+22+c == n`, stored digest fails, pre-bump digest with `c-b` matches | `Foreign(UpstreamMain)` |
 | `e+22+c == n`, stored digest fails, pre-bump fails or underflows | `Present(Invalid)` |
@@ -259,18 +260,29 @@ layout is unsupported, and a block whose framing or CMS cannot be parsed is
 never `Foreign`. `has_signature_block()` is true for `Present` and `Foreign`,
 false for `None`.
 
+A block lives in the region the zip's end record opens, so only a footer there
+can be one: the markers are ordinary bytes anywhere else. A stored entry that
+holds a signed bundle carries a footer and a header of its own, and the zip it
+is packed into ends after them, which makes that bundle unsigned rather than
+broken — and signable, since there is no block to remove first.
+
 Signature checks, in order:
 
 - footer exactly at EOF, header before it, no trailing bytes;
 - DER parses as CMS `SignedData` with exactly one `SignerInfo`, detached
   `id-data` content;
-- digest SHA-256, signature RSA PKCS#1 v1.5;
-- signer certificate located by `sid` (issuer + serial, or subject key
-  identifier);
+- digest SHA-256, signature RSA PKCS#1 v1.5, signer key at least 2048 bits;
+- signer certificate located by `sid`: issuer and serial number, or subject key
+  identifier. Either name finds the certificate, whichever the certificate
+  carries; signing writes issuer and serial number, which every CMS reader reads;
 - digest of the bytes before the header equals the `messageDigest` attribute;
 - RSA signature validates over the authenticated attributes re-tagged as
-  `SET OF` (the `[0] IMPLICIT` tag becomes `0x31` for hashing);
-- `contentType` is `id-data`; `signingTime`, if present, is not in the future.
+  `SET OF` (the `[0] IMPLICIT` tag becomes `0x31`), hashed as they arrived: a
+  decoder may reorder a set, and the signature covers the encoding the signer
+  wrote;
+- `contentType` is `id-data`. `signingTime`, if present, is reported and not
+  enforced: it is the signer's claim, and a signer whose clock runs ahead still
+  verifies.
 
 Certificate checks, independent of chain trust:
 
@@ -283,38 +295,50 @@ Certificate checks, independent of chain trust:
 Certificate expiry deserves emphasis: MCPB has no trusted timestamp or
 counter-signature. A bundle therefore stops verifying when its certificate
 expires. `signingTime` is chosen by the signer and cannot extend trust; it is
-reported as an annotation, never used to override expiry. `Expired` fails by
-default and is downgraded only by `--allow-expired`.
+reported as an annotation, never used to override expiry, and a time in the
+future is not a failure. `Expired` fails by default and is downgraded only by
+`--allow-expired`.
 
 ## 6. Trust
 
-- **macOS:** `security verify-cert -c leaf.pem -c intermediate1.pem ... -p codeSign`
-  — one `-c` per certificate, leaf first, written to a temporary directory as
-  PEM because that is what `security` reads.
+Both platform tools judge the chain at a time: `--at` when the caller names one,
+otherwise now. `--allow-expired` moves that time to the nearest moment the
+signer certificate covers, so the flag is not undone by a chain builder refusing
+the condition the flag accepted.
+
+- **macOS:** `security verify-cert -c leaf.pem -c intermediate1.pem ... -p codeSign
+  -d <YYYY-MM-DD-hh:mm:ss>` — one `-c` per certificate, leaf first, written to a
+  temporary directory as PEM because that is what `security` reads, and `-d` in
+  GMT because that is how it is told when to judge them.
 - **Windows:** PowerShell `X509Chain` with `ApplicationPolicy` OID
   `1.3.6.1.5.5.7.3.3`, intermediates in `ExtraStore`, revocation left at the
-  platform's `Online` setting. The certificates go to the same temporary
-  directory as DER, the one form `X509Certificate2`'s file constructor reads, and
-  the check itself is a script file passed with `-File` so that neither the
-  script nor the paths have to be quoted into the other.
+  platform's `Online` setting and `ChainPolicy.VerificationTime` set from the
+  time. The certificates go to the same temporary directory as DER, the one form
+  `X509Certificate2`'s file constructor reads, and the check itself is a script
+  file passed with `-File` so that neither the script nor the paths have to be
+  quoted into the other. The script exits 2 when the chain does not build, so any
+  other non-zero exit is the check itself failing.
 - **Linux:** no trust evaluation by default. There is no code-signing policy
   store; the distro bundle is unrelated system CA policy. `--ca-file <pem>`
   enables a pure-Rust path check with `rustls-webpki`, requiring the
   `codeSigning` EKU and using the CMS intermediates. The same flag works on
   every platform for deterministic CI.
-- A trust tool that cannot launch or exits abnormally is a trust **error**, not
-  `untrusted` and not `unsigned`.
+- A trust tool that cannot launch, or that exits with anything but its
+  "not trusted" code, is a trust **error**, not `untrusted` and not `unsigned`.
+  `security` has one failure code, so on macOS a usage failure is
+  indistinguishable from an untrusted chain and is reported as the latter.
 - `--no-trust` skips chain evaluation and self-signed classification, reporting
   `Trust::NotEvaluated`; mutually exclusive with `--ca-file`.
 
 Self-signed bundles are rejected by default on every platform (exit 1) unless
-`--allow-self-signed` or `--no-trust` is given. On Linux without `--ca-file`, a
+`--allow-self-signed` or `--no-trust` is given, and that test comes before the
+chain is consulted: a `--ca-file` that names the signer as its own anchor, or a
+platform store that trusts it, still leaves a certificate speaking for itself,
+so it is refused until `--allow-self-signed`. On Linux without `--ca-file`, a
 non-self-signed signer is reported as `Trust::NotEvaluated`: plain `mcpb verify`
 exits 0 but prints a warning that the publisher was not established, the same
-outcome as `--no-trust` for that bundle. The self-signed gate still applies, so
-an unattended Linux verify does not silently accept a self-signed bundle.
-`--no-trust` is the explicit mode that bypasses both the chain check and the
-self-signed gate.
+outcome as `--no-trust` for that bundle. `--no-trust` is the explicit mode that
+bypasses both the chain check and the self-signed gate.
 
 ### 6.1 Pure-Rust signature verification for webpki
 
@@ -367,7 +391,9 @@ its signature is verified, so a signer that declares no EKU is still refused; an
 intermediate that declares one must include `codeSigning`.
 
 Limitation: in `--ca-file` mode every certificate signature in the path must be
-RSA PKCS#1 v1.5/SHA-256. An ECDSA-signed intermediate yields
+RSA PKCS#1 v1.5/SHA-256, with a key of at least 2048 bits. The path is built
+first, so a certificate in the CMS set that the path does not use says nothing
+about the chain. An ECDSA-signed intermediate yields
 `Trust::Untrusted(TrustProblem::UnsupportedChainAlgorithm)`, with the offending
 certificate and algorithm in the message. It is a trust result, not a failure
 of the bundle signature.
@@ -389,8 +415,8 @@ mcpb apply-signature bundle.mcpb --signature sig.der
 | no block | — | — | 1 (`unsigned`) |
 | foreign layout | — | — | 1 (`unsupported`) |
 | malformed / unsupported / invalid | — | — | 1 |
-| valid | expired or not yet valid | any | 1; `--allow-expired` -> 0 |
-| valid | valid | self-signed signer | 1; `--allow-self-signed` or `--no-trust` -> 0 |
+| valid | expired or not yet valid | any, chain included | 1; `--allow-expired` -> 0 |
+| valid | valid | self-signed signer, any chain | 1; `--allow-self-signed` or `--no-trust` -> 0 |
 | valid | valid | untrusted chain | 1 |
 | valid | valid | trust error (tool failed) | 1 |
 | valid | valid | trusted | 0 |
@@ -398,8 +424,10 @@ mcpb apply-signature bundle.mcpb --signature sig.der
 | valid | valid | not evaluated (`--no-trust`) | 0 |
 
 Rows apply top to bottom: the self-signed signer test precedes the trust state,
-so Linux's implicit `NotEvaluated` still rejects a self-signed bundle, while
-`--no-trust` bypasses that gate.
+so Linux's implicit `NotEvaluated` and a `--ca-file` anchor both still reject a
+self-signed bundle, while `--no-trust` bypasses that gate. The expiry row applies
+whatever the trust check says, because `--allow-expired` also moves the chain's
+judgement into the signer certificate's validity window.
 
 `info` always exits 0 and prints block presence, layout, crypto status,
 publisher, issuer, validity window, fingerprint and trust with the reason it was

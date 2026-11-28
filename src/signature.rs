@@ -15,7 +15,7 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::Path;
 use std::time::SystemTime;
@@ -126,6 +126,8 @@ pub enum Unsupported {
     NoSignedAttributes,
     /// A digest or signature algorithm outside RSA PKCS#1 v1.5 with SHA-256.
     Algorithm(String),
+    /// A signer key below the 2048-bit floor, in bits.
+    WeakKey(usize),
 }
 
 impl fmt::Display for Unsupported {
@@ -134,6 +136,10 @@ impl fmt::Display for Unsupported {
             Self::MultipleSigners => f.write_str("it has more than one signer"),
             Self::NoSignedAttributes => f.write_str("it has no authenticated attributes to check"),
             Self::Algorithm(what) => write!(f, "{what} is not RSA PKCS#1 v1.5 with SHA-256"),
+            Self::WeakKey(bits) => write!(
+                f,
+                "its signer key is {bits} bits, and only keys of at least 2048 are verified"
+            ),
         }
     }
 }
@@ -352,7 +358,13 @@ pub(crate) fn framing(bytes: &[u8]) -> Framing {
         return Framing::None;
     };
     if footer + FOOTER.len() != bytes.len() {
-        return match last(&bytes[..footer], HEADER).is_some() {
+        // Bytes after a footer are a broken block only when that footer is outside
+        // the zip. A stored entry can hold the very same markers, as a bundle
+        // shipping signed fixtures does, and the zip it is packed into ends after
+        // them.
+        let outside = end_of_central_directory(bytes, bytes.len())
+            .is_some_and(|end| footer >= end.offset + END);
+        return match outside && last(&bytes[..footer], HEADER).is_some() {
             // A block that something was appended to is a broken block, not an
             // unsigned bundle: saying `unsigned` would hide that it was signed.
             true => Framing::Broken(SignatureError::new(
@@ -364,10 +376,12 @@ pub(crate) fn framing(bytes: &[u8]) -> Framing {
 
     // A CMS signature's certificates can hold the header as data, so the block is
     // the last header before the footer that frames a signed range rather than
-    // simply the last header before the footer.
+    // simply the last header before the footer. The comment declares the block, so
+    // the header is among the bytes a comment can hold.
+    let after = footer.saturating_sub(TAIL);
     let mut broken = None;
     let mut from = footer;
-    while let Some(start) = last(&bytes[..from], HEADER) {
+    while let Some(start) = last(&bytes[after..from], HEADER).map(|at| at + after) {
         match block_at(bytes, start, footer) {
             Ok(block) => return Framing::Block(block),
             Err(error) => {
@@ -550,15 +564,40 @@ pub(crate) fn without_block(bytes: &[u8]) -> Result<Option<Vec<u8>>, SignatureEr
 }
 
 /// Replaces the file at `path` with `bytes`, or leaves it as it was.
+///
+/// The file a symlink names is replaced, not the link, and the result keeps the
+/// permissions of the file it replaces: signing a bundle completes a file the
+/// caller already had, rather than writing a new one.
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let temp = path.with_extension(format!("{}.sig.tmp", std::process::id()));
-    let written = fs::write(&temp, bytes)
-        .map_err(Error::write)
-        .and_then(|()| fs::rename(&temp, path).map_err(Error::from));
+
+    let written = write(&temp, bytes)
+        .and_then(|()| copy_permissions(&path, &temp))
+        .and_then(|()| fs::rename(&temp, &path).map_err(Error::from));
     if written.is_err() {
         let _ = fs::remove_file(&temp);
     }
     written
+}
+
+/// Writes `bytes` to `path`, and waits until they reach the disk.
+///
+/// The rename that publishes them is only atomic if the bytes are already
+/// written: a machine that loses power between the two must find one file or the
+/// other, never a short one.
+fn write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let mut file = fs::File::create(path).map_err(Error::write)?;
+    file.write_all(bytes).map_err(Error::write)?;
+    file.sync_all().map_err(Error::write)
+}
+
+/// Gives `to` the permissions `from` has, when `from` is there to ask.
+fn copy_permissions(from: &Path, to: &Path) -> Result<(), Error> {
+    let Ok(metadata) = fs::metadata(from) else {
+        return Ok(());
+    };
+    fs::set_permissions(to, metadata.permissions()).map_err(Error::write)
 }
 
 /// What the file at `path` says about its signature, checked now.

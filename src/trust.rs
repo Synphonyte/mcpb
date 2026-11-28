@@ -36,7 +36,7 @@ pub fn evaluate(signature: &Signature, at: SystemTime, ca_file: Option<&Path>) -
 
 /// macOS and Windows ask their own chain builder; everywhere else has none to ask.
 #[cfg(all(feature = "trust", any(target_os = "macos", target_os = "windows")))]
-fn platform(certificates: &[x509_cert::Certificate], _at: SystemTime) -> Trust {
+fn platform(certificates: &[x509_cert::Certificate], at: SystemTime) -> Trust {
     #[cfg(target_os = "macos")]
     let format = system::Format::Pem;
     #[cfg(target_os = "windows")]
@@ -48,9 +48,12 @@ fn platform(certificates: &[x509_cert::Certificate], _at: SystemTime) -> Trust {
     };
 
     #[cfg(target_os = "macos")]
-    let command = system::macos(&files, certificates.len());
+    let command = match system::macos(&files, certificates.len(), at) {
+        Ok(command) => command,
+        Err(error) => return Trust::Error(error),
+    };
     #[cfg(target_os = "windows")]
-    let command = match system::windows(&files, certificates.len()) {
+    let command = match system::windows(&files, certificates.len(), at) {
         Ok(command) => command,
         Err(error) => return Trust::Error(error),
     };
@@ -73,12 +76,13 @@ mod system {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
+    use std::time::SystemTime;
 
     use x509_cert::Certificate;
     #[cfg(target_os = "windows")]
     use x509_cert::der::Encode;
     #[cfg(target_os = "macos")]
-    use x509_cert::der::{EncodePem, pem::LineEnding};
+    use x509_cert::der::{DateTime, EncodePem, pem::LineEnding};
 
     use crate::signature::{Trust, TrustError, TrustProblem};
 
@@ -86,6 +90,16 @@ mod system {
     pub(super) const PROGRAM: &str = "security verify-cert";
     #[cfg(target_os = "windows")]
     pub(super) const PROGRAM: &str = "powershell X509Chain";
+
+    /// The exit code that means "the chain was built and is not trusted".
+    ///
+    /// Every other failure is the check itself failing, which is a trust error
+    /// rather than a verdict: `security` has one code for both, so only the
+    /// PowerShell script, which picks its own, can tell them apart.
+    #[cfg(target_os = "macos")]
+    pub(super) const NOT_TRUSTED: i32 = 1;
+    #[cfg(target_os = "windows")]
+    pub(super) const NOT_TRUSTED: i32 = 2;
 
     /// How a verifier reads a certificate it is handed.
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,9 +193,13 @@ mod system {
         }
     }
 
-    /// `security verify-cert` with the code-signing policy.
+    /// `security verify-cert` with the code-signing policy, at `at`.
     #[cfg(target_os = "macos")]
-    pub(super) fn macos(files: &Certificates, count: usize) -> Command {
+    pub(super) fn macos(
+        files: &Certificates,
+        count: usize,
+        at: SystemTime,
+    ) -> Result<Command, TrustError> {
         let mut command = Command::new("security");
         command.arg("verify-cert");
         // One `-c` per certificate, the signer first: the rest are what the
@@ -190,27 +208,55 @@ mod system {
             command.arg("-c").arg(files.at(index));
         }
         command.arg("-p").arg("codeSign");
-        command
+        // The chain is judged at the time the caller asked about, which is what
+        // `--at` means; without this the tool would use the clock instead, and a
+        // time it cannot name is refused rather than checked as now.
+        command.arg("-d").arg(date(at)?);
+        Ok(command)
     }
 
-    /// `X509Chain` with the code-signing application policy.
+    /// `security`'s `-d` date: `YYYY-MM-DD-hh:mm:ss`, in GMT.
+    #[cfg(target_os = "macos")]
+    fn date(at: SystemTime) -> Result<String, TrustError> {
+        let time = DateTime::from_system_time(at).map_err(|error| {
+            TrustError::Configuration(format!("the time to check at cannot be written: {error}"))
+        })?;
+        Ok(format!(
+            "{:04}-{:02}-{:02}-{:02}:{:02}:{:02}",
+            time.year(),
+            time.month(),
+            time.day(),
+            time.hour(),
+            time.minutes(),
+            time.seconds()
+        ))
+    }
+
+    /// `X509Chain` with the code-signing application policy, at `at`.
     #[cfg(target_os = "windows")]
-    pub(super) fn windows(files: &Certificates, count: usize) -> Result<Command, TrustError> {
+    pub(super) fn windows(
+        files: &Certificates,
+        count: usize,
+        at: SystemTime,
+    ) -> Result<Command, TrustError> {
         // A script file with the certificates as arguments: `-File` is the one
         // form that hands a multi-line script and its paths over without either
-        // being quoted into the other.
+        // being quoted into the other. The first argument is the time to judge
+        // the chain at, in seconds since the Unix epoch.
         let script = r#"$ErrorActionPreference = 'Stop'
-$paths = $args
+$seconds = [long]$args[0]
+$paths = @($args[1..($args.Length - 1)])
 $leaf = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($paths[0])
 $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
 $chain.ChainPolicy.RevocationMode = 'Online'
 $chain.ChainPolicy.ApplicationPolicy.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.3'))
+$chain.ChainPolicy.VerificationTime = [System.DateTimeOffset]::FromUnixTimeSeconds($seconds).LocalDateTime
 for ($i = 1; $i -lt $paths.Length; $i++) {
   $chain.ChainPolicy.ExtraStore.Add([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($paths[$i]))
 }
 if (-not $chain.Build($leaf)) {
-  $chain.ChainStatus | ForEach-Object { $_.StatusInformation.Trim() } | Out-String | Write-Error
-  exit 1
+  [Console]::Error.WriteLine(($chain.ChainStatus | ForEach-Object { $_.StatusInformation.Trim() } | Out-String))
+  exit 2
 }
 "#;
 
@@ -227,25 +273,39 @@ if (-not $chain.Build($leaf)) {
             .arg("-ExecutionPolicy")
             .arg("Bypass")
             .arg("-File")
-            .arg(&path);
+            .arg(&path)
+            .arg(seconds(at).to_string());
         for index in 0..count {
             command.arg(files.at(index));
         }
         Ok(command)
     }
 
+    /// `at` in seconds since the Unix epoch, which is what `DateTimeOffset` reads.
+    #[cfg(target_os = "windows")]
+    fn seconds(at: SystemTime) -> u64 {
+        at.duration_since(SystemTime::UNIX_EPOCH)
+            .map(|since| since.as_secs())
+            .unwrap_or_default()
+    }
+
     /// Runs a chain check and reads its verdict.
     pub(super) fn run(mut command: Command, program: &str) -> Trust {
         match command.output() {
             Ok(output) if output.status.success() => Trust::Trusted,
-            Ok(output) if output.status.code().is_none() => Trust::Error(TrustError::ToolFailed {
+            Ok(output) if output.status.code() == Some(NOT_TRUSTED) => Trust::Untrusted(
+                TrustProblem::ChainInvalid(reason(&output.stderr, &output.stdout)),
+            ),
+            Ok(output) => Trust::Error(TrustError::ToolFailed {
                 program: program.to_string(),
-                message: "it was killed before it answered".to_string(),
+                message: match output.status.code() {
+                    Some(code) => format!(
+                        "it exited with {code}: {}",
+                        reason(&output.stderr, &output.stdout)
+                    ),
+                    None => "it was killed before it answered".to_string(),
+                },
             }),
-            Ok(output) => Trust::Untrusted(TrustProblem::ChainInvalid(reason(
-                &output.stderr,
-                &output.stdout,
-            ))),
             Err(error) => Trust::Error(TrustError::ToolFailed {
                 program: program.to_string(),
                 message: error.to_string(),
@@ -277,13 +337,6 @@ fn anchored(certificates: &[x509_cert::Certificate], at: SystemTime, file: &Path
         Ok(roots) => roots,
         Err(error) => return Trust::Error(TrustError::Configuration(error.to_string())),
     };
-
-    // Every link has to be one this crate can check. A link it cannot check makes
-    // the chain untrusted with a reason, which is a trust answer: the bundle's own
-    // signature is not in question.
-    if let Some(problem) = unsupported_link(certificates, &roots) {
-        return Trust::Untrusted(problem);
-    }
 
     let mut roots_der = Vec::with_capacity(roots.len());
     for root in &roots {
@@ -346,11 +399,19 @@ fn anchored(certificates: &[x509_cert::Certificate], at: SystemTime, file: &Path
         None,
     ) {
         Ok(_) => Trust::Trusted,
+        // The path is built before its links are verified, so an algorithm this
+        // provider cannot check is only reported when the path that was built has
+        // one: a certificate in the set that is not part of the path says nothing
+        // about this signature. A link it cannot check makes the chain untrusted
+        // with a reason, which is a trust answer: the bundle's own signature is
+        // not in question.
         Err(webpki::Error::UnsupportedSignatureAlgorithmContext(_)) => {
-            Trust::Untrusted(TrustProblem::UnsupportedChainAlgorithm {
-                certificate: "a certificate in the chain".to_string(),
-                algorithm: "an algorithm other than RSA PKCS#1 v1.5 with SHA-256".to_string(),
-            })
+            Trust::Untrusted(unsupported_link(certificates, &roots).unwrap_or_else(|| {
+                TrustProblem::UnsupportedChainAlgorithm {
+                    certificate: "a certificate in the chain".to_string(),
+                    algorithm: "an algorithm other than RSA PKCS#1 v1.5 with SHA-256".to_string(),
+                }
+            }))
         }
         Err(error) => Trust::Untrusted(TrustProblem::ChainInvalid(error.to_string())),
     }
@@ -380,12 +441,18 @@ impl rustls_pki_types::SignatureVerificationAlgorithm for RsaPkcs1Sha256 {
         use rsa::pkcs1::DecodeRsaPublicKey;
         use rsa::pkcs1v15::{Signature, VerifyingKey};
         use rsa::signature::Verifier;
+        use rsa::traits::PublicKeyParts;
         use sha2::Sha256;
 
         // webpki hands over the `subjectPublicKey`'s bytes, which for an RSA key
         // is a PKCS#1 `RSAPublicKey`.
         let key = rsa::PublicKey::from_pkcs1_der(public_key)
             .map_err(|_| rustls_pki_types::InvalidSignature)?;
+        // The same floor the signer's key has to clear: a chain whose links are
+        // signed by a weaker key is not one this crate checks.
+        if key.size() * 8 < crate::signing::MIN_KEY_BITS {
+            return Err(rustls_pki_types::InvalidSignature);
+        }
         let signature =
             Signature::try_from(signature).map_err(|_| rustls_pki_types::InvalidSignature)?;
 

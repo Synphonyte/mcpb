@@ -133,6 +133,9 @@ impl Bundle {
     }
 
     /// What the bundle's signature says, checked at the current time.
+    ///
+    /// The file is read again, so a bundle that changed since [`Self::open`] is
+    /// reported as it is now rather than as it was then.
     #[cfg(feature = "signing")]
     pub fn signature(&self) -> Result<signature::SignatureState, Error> {
         self.signature_at(SystemTime::now())

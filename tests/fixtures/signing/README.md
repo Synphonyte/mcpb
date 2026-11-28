@@ -18,6 +18,9 @@ repository on purpose, and nothing here may sign anything that matters.
 | `expired.pem`, `expired.key` | an RSA-2048 signer that expired in 2020 |
 | `self-signed.pem`, `self-signed.key` | an RSA-2048 signer that is its own issuer |
 | `no-eku.pem`, `no-eku.key` | an RSA-2048 signer without a codeSigning EKU |
+| `ski.pem`, `ski.key` | an RSA-2048 signer whose certificate carries a subject
+  key identifier, so a CMS can name it by that identifier or by issuer and
+  serial number |
 | `weak.pem`, `weak.key` | an RSA-1024 signer, below what code signing needs |
 | `ec-ca.pem`, `ec-ca.key` | an ECDSA P-256 CA, whose signatures the `--ca-file`
   check does not implement |

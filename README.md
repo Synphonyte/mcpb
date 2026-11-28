@@ -153,7 +153,8 @@ mcpb apply-signature my-server.mcpb --signature sig.der
   certificate authority's signature, and 1 for a self-signed one. `--ca-file ca.pem` builds the
   chain in pure Rust against the anchors given, on every platform, which is also what a private
   certificate authority needs and what keeps CI deterministic. `--no-trust` checks the signature
-  alone.
+  alone. A self-signed signer is refused wherever the chain is consulted, naming the certificate
+  itself as an anchor included; `--allow-self-signed` is the way to accept one.
 - `prepare-for-signing` reserves a zero-filled slot after the zip and prints how many bytes the
   signature has to cover, so an HSM or external signer can sign bytes that never change afterwards;
   `apply-signature` fills the slot with the detached DER CMS signature it produced, and refuses one

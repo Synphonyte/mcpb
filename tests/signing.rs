@@ -257,6 +257,42 @@ fn an_appended_byte_makes_the_block_broken() {
 }
 
 #[test]
+fn the_markers_of_a_signed_bundle_inside_one_are_not_a_block() {
+    // A stored entry can hold a signed bundle, as a bundle shipping fixtures does.
+    // Its footer is inside this bundle, and this bundle's own zip ends after it, so
+    // the file is unsigned: not signed-but-broken.
+    let dir = tempfile::TempDir::new().unwrap();
+    let nested = dir.path().join("nested.mcpb");
+    let mut zip = zip::ZipWriter::new(fs::File::create(&nested).unwrap());
+    zip.start_file(
+        "fixtures/upstream-main.mcpb",
+        zip::write::SimpleFileOptions::default(),
+    )
+    .unwrap();
+    zip.write_all(&fs::read(fixture("upstream-main.mcpb")).unwrap())
+        .unwrap();
+    zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(br#"{"manifest_version": "0.3", "name": "nested"}"#)
+        .unwrap();
+    zip.finish().unwrap();
+
+    assert_eq!(
+        mcpb::signature_at(&nested, SystemTime::now()).unwrap(),
+        SignatureState::None
+    );
+
+    // Which means it can be signed, rather than refusing a block it would have to
+    // remove first.
+    let key = signer();
+    sign(&nested, &key).unwrap();
+    assert!(matches!(
+        mcpb::signature_at(&nested, SystemTime::now()).unwrap(),
+        SignatureState::Present(_)
+    ));
+}
+
+#[test]
 fn the_upstream_layouts_are_named_not_verified() {
     for (name, expected) in [
         ("upstream-212.mcpb", ForeignLayout::Mcpb212),

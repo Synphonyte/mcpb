@@ -26,11 +26,12 @@ use crate::{BundleSpec, Error};
 /// The smallest reserved slot: room for a signature and the certificate chain.
 pub const MIN_SLOT: usize = 4096;
 
+/// The smallest key code signing accepts, in bits: this crate signs with keys of
+/// at least this size, and verifies nothing weaker.
+pub(crate) const MIN_KEY_BITS: usize = 2048;
+
 /// The largest reserved slot: the zip's comment length is two bytes.
 pub const MAX_SLOT: usize = COMMENT_MAX;
-
-/// The smallest RSA key this crate signs with.
-const MIN_KEY_BITS: usize = 2048;
 
 /// How a bundle is signed.
 #[derive(Clone, Debug, Default)]
@@ -449,9 +450,12 @@ fn decrypt(
 ) -> Result<PrivateKey, Error> {
     let info = EncryptedPrivateKeyInfoRef::try_from(der)
         .map_err(|error| unreadable(path, &format!("not an encrypted key: {error}")))?;
-    let password = passphrase()?;
+    // A passphrase is whatever the caller typed or wrote: only the line and
+    // environment forms have a terminator to strip, and the CLI has stripped it.
+    // Spaces at either end are part of it.
+    let password = zeroize::Zeroizing::new(passphrase()?);
     let document = info
-        .decrypt(password.trim())
+        .decrypt(password.as_bytes())
         .map_err(|error| unreadable(path, &format!("it cannot be decrypted: {error}")))?;
 
     PrivateKey::from_pkcs8_der(document.as_bytes())

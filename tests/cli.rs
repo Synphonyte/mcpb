@@ -434,6 +434,75 @@ fn a_self_signed_bundle_needs_to_be_allowed() {
 
     let output = verify(&bundle, &["--no-trust"]);
     assert!(output.status.success(), "{}", text(&output));
+
+    // Naming the certificate itself as the anchor is not consent to a self-signed
+    // signer: it is still the certificate speaking for itself.
+    let ca = fixture("self-signed.pem");
+    let output = verify(&bundle, &["--ca-file", ca.to_str().expect("UTF-8")]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("--allow-self-signed"),
+        "{}",
+        text(&output)
+    );
+
+    let output = verify(
+        &bundle,
+        &[
+            "--ca-file",
+            ca.to_str().expect("UTF-8"),
+            "--allow-self-signed",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+}
+
+#[test]
+fn an_expired_signer_is_only_refused_while_the_chain_is_checked() {
+    let dir = tempfile::TempDir::new().expect("a temporary directory");
+    let bundle = packed(dir.path());
+
+    // `chained` is signed by an intermediate, so the chain is complete only when
+    // the signature carries it.
+    let output = mcpb(&[
+        "sign",
+        bundle.to_str().expect("UTF-8"),
+        "--cert",
+        fixture("chained.pem").to_str().expect("UTF-8"),
+        "--key",
+        fixture("chained.key").to_str().expect("UTF-8"),
+        "--chain",
+        fixture("intermediate.pem").to_str().expect("UTF-8"),
+    ]);
+    assert!(output.status.success(), "{}", text(&output));
+
+    let ca = fixture("ca.pem");
+    let ca = ca.to_str().expect("UTF-8");
+    let output = verify(&bundle, &["--ca-file", ca]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(
+        text(&output).contains("trust: trusted"),
+        "{}",
+        text(&output)
+    );
+
+    // Past the signer's own expiry the chain is refused, and `--allow-expired`
+    // downgrades that same condition rather than leaving it to the chain check.
+    let output = verify(&bundle, &["--ca-file", ca, "--at", "2101-01-01T00:00:00Z"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(text(&output).contains("expired"), "{}", text(&output));
+
+    let output = verify(
+        &bundle,
+        &[
+            "--ca-file",
+            ca,
+            "--at",
+            "2101-01-01T00:00:00Z",
+            "--allow-expired",
+        ],
+    );
+    assert!(output.status.success(), "{}", text(&output));
 }
 
 #[test]

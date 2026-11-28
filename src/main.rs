@@ -7,8 +7,8 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use mcpb::{
-    Bundle, BundleSpec, CertificateValidity, CryptoValidity, Error, Platform, SignOptions,
-    Signature, SignatureState, SigningKey, Tree, Trust,
+    Bundle, BundleSpec, CertificateInfo, CertificateValidity, CryptoValidity, Error, Platform,
+    SignOptions, Signature, SignatureState, SigningKey, Tree, Trust,
 };
 
 const USAGE: &str = "\
@@ -75,11 +75,13 @@ verify:
                      any platform; without it macOS and Windows ask their own
                      chain builder and Linux reports that trust was not evaluated
       --allow-self-signed
-                     accept a bundle whose signer is its own issuer
+                     accept a bundle whose signer is its own issuer, whatever
+                     the certificate chain says
       --allow-expired
-                     accept a signer certificate that has expired
-      --at <time>    check the certificate at <time> (RFC 3339, such as
-                     2026-01-31T12:00:00Z) rather than now
+                     accept a signer certificate that has expired, judging the
+                     chain at a time the certificate covers
+      --at <time>    check the certificate and its chain at <time> (RFC 3339,
+                     such as 2026-01-31T12:00:00Z) rather than now
 
 prepare-for-signing:
   Reserves a zero-filled slot after the zip for a signature made elsewhere, such
@@ -925,19 +927,31 @@ fn verify(check: &Check) -> Result<Option<String>, Failure> {
         )));
     }
 
+    // `--allow-expired` downgrades the expiry gate, so trust is asked about a
+    // time the signer certificate covers: otherwise the chain builder refuses on
+    // the very condition the flag accepted, and the flag only worked where
+    // nothing checked the chain.
+    let trust_at = match check.allow_expired {
+        true => covered_by(at, signer),
+        false => at,
+    };
     let trust = match check.no_trust {
         true => Trust::NotEvaluated,
-        false => mcpb::check_trust(signature, at, check.ca_file.as_deref()),
+        false => mcpb::check_trust(signature, trust_at, check.ca_file.as_deref()),
     };
 
+    // A self-signed signer names no publisher, whatever answers for its chain: an
+    // anchor the caller named is still the certificate itself talking.
     let accepted = if check.no_trust || (signer.self_signed && check.allow_self_signed) {
         true
+    } else if signer.self_signed {
+        false
     } else {
         match &trust {
             Trust::Trusted => true,
             // Linux has no code-signing policy store, so a CA-issued signer is
-            // neither trusted nor refused there; a self-signed one still is.
-            Trust::NotEvaluated => !signer.self_signed,
+            // neither trusted nor refused there.
+            Trust::NotEvaluated => true,
             Trust::Untrusted(_) | Trust::Error(_) => false,
         }
     };
@@ -959,12 +973,12 @@ fn verify(check: &Check) -> Result<Option<String>, Failure> {
             text
         }
         false => {
-            let why = match (&trust, signer.self_signed) {
-                (Trust::NotEvaluated, true) => {
+            let why = match signer.self_signed {
+                true => {
                     "it is self-signed, so it names no publisher; --allow-self-signed accepts it anyway"
                         .to_string()
                 }
-                _ => trust.to_string(),
+                false => trust.to_string(),
             };
             format!("{path}: signed, but {why}{}", details(signature, &trust))
         }
@@ -973,6 +987,16 @@ fn verify(check: &Check) -> Result<Option<String>, Failure> {
     match accepted {
         true => Ok(Some(text)),
         false => Err(Failure::Rejected(text)),
+    }
+}
+
+/// `at`, moved to the nearest time `signer`'s certificate covers.
+fn covered_by(at: SystemTime, signer: &CertificateInfo) -> SystemTime {
+    match signer.valid_from <= signer.valid_to {
+        // A certificate whose period runs backwards covers nothing, so there is
+        // no time to move to.
+        true => at.max(signer.valid_from).min(signer.valid_to),
+        false => at,
     }
 }
 
